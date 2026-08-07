@@ -25,7 +25,8 @@ export async function relationTypesRoutes(app: FastifyInstance) {
       const body = createRelationTypeSchema.parse(request.body);
       const relationType = await relationTypesService.createRelationType(
         request.params.mapId,
-        body
+        body,
+        request.user!.id
       );
       reply.status(201).send(relationType);
     }
@@ -36,7 +37,7 @@ export async function relationTypesRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupRelationType, 'EDITOR')] },
     async (request) => {
       const body = updateRelationTypeSchema.parse(request.body);
-      return relationTypesService.updateRelationType(request.params.id, body);
+      return relationTypesService.updateRelationType(request.params.id, body, request.user!.id);
     }
   );
 
@@ -46,7 +47,8 @@ export async function relationTypesRoutes(app: FastifyInstance) {
     async (request, reply) => {
       await relationTypesService.deleteRelationType(
         request.params.id,
-        request.query.force === 'true'
+        request.query.force === 'true',
+        request.user!.id
       );
       reply.status(204).send();
     }

@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { ConflictError, NotFoundError } from '../errors.js';
+import { logActivity } from '../lib/activityLog.js';
 
 export async function listCategories(mapId: string) {
   return prisma.nodeCategory.findMany({ where: { mapId }, orderBy: { createdAt: 'asc' } });
@@ -7,10 +8,12 @@ export async function listCategories(mapId: string) {
 
 export async function createCategory(
   mapId: string,
-  data: { name: string; icon?: string; color?: string }
+  data: { name: string; icon?: string; color?: string },
+  actorId: string
 ) {
+  let category;
   try {
-    return await prisma.nodeCategory.create({ data: { mapId, ...data } });
+    category = await prisma.nodeCategory.create({ data: { mapId, ...data } });
   } catch (err: any) {
     if (err?.code === 'P2002') {
       throw new ConflictError(`A category named "${data.name}" already exists in this map`);
@@ -20,6 +23,8 @@ export async function createCategory(
     }
     throw err;
   }
+  await logActivity(mapId, actorId, 'create', 'category', category.id, `Created category "${category.name}"`);
+  return category;
 }
 
 async function getCategoryOrThrow(id: string) {
@@ -30,21 +35,25 @@ async function getCategoryOrThrow(id: string) {
 
 export async function updateCategory(
   id: string,
-  data: { name?: string; icon?: string; color?: string }
+  data: { name?: string; icon?: string; color?: string },
+  actorId: string
 ) {
-  await getCategoryOrThrow(id);
+  const existing = await getCategoryOrThrow(id);
+  let updated;
   try {
-    return await prisma.nodeCategory.update({ where: { id }, data });
+    updated = await prisma.nodeCategory.update({ where: { id }, data });
   } catch (err: any) {
     if (err?.code === 'P2002') {
       throw new ConflictError(`A category named "${data.name}" already exists in this map`);
     }
     throw err;
   }
+  await logActivity(existing.mapId, actorId, 'update', 'category', id, `Updated category "${updated.name}"`);
+  return updated;
 }
 
-export async function deleteCategory(id: string, force: boolean) {
-  await getCategoryOrThrow(id);
+export async function deleteCategory(id: string, force: boolean, actorId: string) {
+  const existing = await getCategoryOrThrow(id);
   const nodeCount = await prisma.node.count({ where: { categoryId: id } });
   if (nodeCount > 0 && !force) {
     throw new ConflictError(
@@ -57,4 +66,5 @@ export async function deleteCategory(id: string, force: boolean) {
     await prisma.node.updateMany({ where: { categoryId: id }, data: { categoryId: null } });
   }
   await prisma.nodeCategory.delete({ where: { id } });
+  await logActivity(existing.mapId, actorId, 'delete', 'category', id, `Deleted category "${existing.name}"`);
 }

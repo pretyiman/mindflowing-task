@@ -26,7 +26,7 @@ export async function mapsRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireMapAccess('EDITOR')] },
     async (request) => {
       const body = updateMapSchema.parse(request.body);
-      return mapsService.updateMap(request.params.mapId, body);
+      return mapsService.updateMap(request.params.mapId, body, request.user!.id);
     }
   );
 
@@ -34,7 +34,7 @@ export async function mapsRoutes(app: FastifyInstance) {
     '/maps/:mapId',
     { preHandler: [requireAuth, requireVerifiedEmail, requireMapAccess('EDITOR')] },
     async (request, reply) => {
-      await mapsService.deleteMap(request.params.mapId);
+      await mapsService.deleteMap(request.params.mapId, request.user!.id);
       reply.status(204).send();
     }
   );
@@ -42,6 +42,12 @@ export async function mapsRoutes(app: FastifyInstance) {
   app.get<{ Params: { mapId: string } }>(
     '/maps/:mapId/graph',
     { preHandler: [requireAuth, requireMapAccess('VIEWER')] },
-    async (request) => mapsService.getGraph(request.params.mapId)
+    async (request) => mapsService.getGraph(request.params.mapId, request.user!.id)
+  );
+
+  app.get<{ Params: { mapId: string } }>(
+    '/maps/:mapId/members',
+    { preHandler: [requireAuth, requireMapAccess('VIEWER')] },
+    async (request) => mapsService.listMapMembers(request.params.mapId)
   );
 }

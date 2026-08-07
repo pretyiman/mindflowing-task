@@ -15,10 +15,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GraphData, HandleId } from '../../types/graph';
+import type { GraphData, HandleId, MapMember } from '../../types/graph';
 import { edgesApi } from '../../api/edges.api';
 import { nodesApi } from '../../api/nodes.api';
 import { groupsApi } from '../../api/groups.api';
+import { mapsApi } from '../../api/maps.api';
 import { ApiError } from '../../api/client';
 import { useGraphStore } from '../../state/graphStore';
 import CustomEdge from './CustomEdge';
@@ -62,9 +63,17 @@ interface Props {
   onBackgroundClick: () => void;
   onChanged: () => void;
   canEdit: boolean;
+  isOwner: boolean;
+  taskManagementEnabled: boolean;
   onOpenCategories: () => void;
   onOpenRelationTypes: () => void;
   onOpenTags: () => void;
+  onOpenActivity: () => void;
+  onOpenTaskStatuses: () => void;
+  onOpenProgress: () => void;
+  // Only passed when this GRAPH map has task management on - switches to the
+  // task list view for the rest of this visit (see App.tsx's viewOverride).
+  onViewTaskList?: () => void;
 }
 
 interface PendingConnection {
@@ -84,12 +93,27 @@ export default function GraphCanvas({
   onBackgroundClick,
   onChanged,
   canEdit,
+  isOwner,
+  taskManagementEnabled,
   onOpenCategories,
   onOpenRelationTypes,
-  onOpenTags
+  onOpenTags,
+  onOpenActivity,
+  onOpenTaskStatuses,
+  onOpenProgress,
+  onViewTaskList
 }: Props) {
   const [nodes, setNodes] = useState<RFNode[]>([]);
   const [edges, setEdges] = useState<RFEdge[]>([]);
+  const [members, setMembers] = useState<MapMember[]>([]);
+
+  useEffect(() => {
+    if (!taskManagementEnabled) {
+      setMembers([]);
+      return;
+    }
+    mapsApi.members(mapId).then(setMembers);
+  }, [mapId, taskManagementEnabled]);
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
   const [pendingRelationTypeId, setPendingRelationTypeId] = useState('');
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -167,8 +191,24 @@ export default function GraphCanvas({
     });
   }, []);
 
-  const { searchQuery, selectedTagIds, selectedGroupId, connectedToNodeId } = useGraphStore();
-  const filterState = { searchQuery, selectedTagIds, selectedGroupId, connectedToNodeId };
+  const {
+    searchQuery,
+    selectedTagIds,
+    selectedGroupId,
+    connectedToNodeId,
+    selectedAssigneeId,
+    selectedTaskStatusId,
+    selectedPriority
+  } = useGraphStore();
+  const filterState = {
+    searchQuery,
+    selectedTagIds,
+    selectedGroupId,
+    connectedToNodeId,
+    selectedAssigneeId,
+    selectedTaskStatusId,
+    selectedPriority
+  };
   const filterActive = isFilterActive(filterState);
   const matchedIds = useMemo(() => filterGraph(data, filterState), [data, JSON.stringify(filterState)]);
 
@@ -378,7 +418,17 @@ export default function GraphCanvas({
 
   return (
     <ReactFlowProvider>
-      <NodeInteractionContext.Provider value={{ categories: data.categories, onQuickAdd: handleQuickAdd, canEdit }}>
+      <NodeInteractionContext.Provider
+        value={{
+          categories: data.categories,
+          onQuickAdd: handleQuickAdd,
+          canEdit,
+          isOwner,
+          taskManagementEnabled,
+          taskStatuses: data.taskStatuses,
+          members
+        }}
+      >
         <div className="graph-panel">
           <ViewportCenterRegistrar />
           {canEdit && groupableSelectedIds.length >= 2 && (
@@ -454,7 +504,27 @@ export default function GraphCanvas({
                   <ControlButton className="canvas-tool-btn" onClick={onOpenTags} title="Tags">
                     🏷
                   </ControlButton>
+                  {taskManagementEnabled && (
+                    <ControlButton className="canvas-tool-btn" onClick={onOpenTaskStatuses} title="Task Statuses">
+                      ✅
+                    </ControlButton>
+                  )}
                 </>
+              )}
+              {isOwner && (
+                <ControlButton className="canvas-tool-btn" onClick={onOpenActivity} title="Activity">
+                  📜
+                </ControlButton>
+              )}
+              {taskManagementEnabled && (
+                <ControlButton className="canvas-tool-btn" onClick={onOpenProgress} title="Progress">
+                  📊
+                </ControlButton>
+              )}
+              {onViewTaskList && (
+                <ControlButton className="canvas-tool-btn" onClick={onViewTaskList} title="Task List">
+                  📋
+                </ControlButton>
               )}
             </Controls>
             <MiniMap pannable zoomable />

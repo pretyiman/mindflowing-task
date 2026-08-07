@@ -7,11 +7,12 @@ type Role = 'VIEWER' | 'EDITOR';
 const userSelect = { id: true, email: true, name: true } as const;
 
 export async function listCollaborators(mapId: string) {
-  return prisma.mapCollaborator.findMany({
+  const rows = await prisma.mapCollaborator.findMany({
     where: { mapId },
-    include: { user: { select: userSelect } },
+    include: { user: { select: userSelect }, scopeTags: { select: { tagId: true } } },
     orderBy: { createdAt: 'asc' }
   });
+  return rows.map(({ scopeTags, ...row }) => ({ ...row, scopeTagIds: scopeTags.map((s) => s.tagId) }));
 }
 
 // Doesn't require the invited email to already have an account, and doesn't
@@ -34,14 +35,40 @@ export async function inviteCollaborator(mapId: string, ownerId: string, email: 
   return createInvite(mapId, email, role);
 }
 
-export async function updateCollaboratorRole(id: string, role: Role) {
+export async function updateCollaborator(
+  id: string,
+  data: { role?: Role; scopeTagIds?: string[] }
+) {
   const existing = await prisma.mapCollaborator.findUnique({ where: { id } });
   if (!existing) throw new NotFoundError('Collaborator');
-  return prisma.mapCollaborator.update({
-    where: { id },
-    data: { role },
-    include: { user: { select: userSelect } }
-  });
+
+  if (data.scopeTagIds) {
+    const validCount = await prisma.tag.count({
+      where: { id: { in: data.scopeTagIds }, mapId: existing.mapId }
+    });
+    if (validCount !== new Set(data.scopeTagIds).size) {
+      throw new NotFoundError('One or more tags');
+    }
+    await prisma.$transaction([
+      prisma.collaboratorTagScope.deleteMany({ where: { collaboratorId: id } }),
+      prisma.collaboratorTagScope.createMany({
+        data: data.scopeTagIds.map((tagId) => ({ collaboratorId: id, tagId }))
+      })
+    ]);
+  }
+
+  if (data.role) {
+    await prisma.mapCollaborator.update({ where: { id }, data: { role: data.role } });
+  }
+
+  const [updated, scopeTags] = await Promise.all([
+    prisma.mapCollaborator.findUniqueOrThrow({
+      where: { id },
+      include: { user: { select: userSelect } }
+    }),
+    prisma.collaboratorTagScope.findMany({ where: { collaboratorId: id }, select: { tagId: true } })
+  ]);
+  return { ...updated, scopeTagIds: scopeTags.map((s) => s.tagId) };
 }
 
 export async function removeCollaborator(id: string) {

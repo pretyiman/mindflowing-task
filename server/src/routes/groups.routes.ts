@@ -20,7 +20,7 @@ export async function groupsRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireMapAccess('EDITOR')] },
     async (request, reply) => {
       const body = createGroupSchema.parse(request.body);
-      const group = await groupsService.createGroup(request.params.mapId, body);
+      const group = await groupsService.createGroup(request.params.mapId, body, request.user!.id);
       reply.status(201).send(group);
     }
   );
@@ -30,7 +30,7 @@ export async function groupsRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupGroup, 'EDITOR')] },
     async (request) => {
       const body = updateGroupSchema.parse(request.body);
-      return groupsService.updateGroup(request.params.id, body);
+      return groupsService.updateGroup(request.params.id, body, request.user!.id);
     }
   );
 
@@ -38,7 +38,7 @@ export async function groupsRoutes(app: FastifyInstance) {
     '/groups/:id',
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupGroup, 'EDITOR')] },
     async (request, reply) => {
-      await groupsService.deleteGroup(request.params.id);
+      await groupsService.deleteGroup(request.params.id, request.user!.id);
       reply.status(204).send();
     }
   );

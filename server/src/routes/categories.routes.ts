@@ -20,7 +20,7 @@ export async function categoriesRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireMapAccess('EDITOR')] },
     async (request, reply) => {
       const body = createCategorySchema.parse(request.body);
-      const category = await categoriesService.createCategory(request.params.mapId, body);
+      const category = await categoriesService.createCategory(request.params.mapId, body, request.user!.id);
       reply.status(201).send(category);
     }
   );
@@ -30,7 +30,7 @@ export async function categoriesRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupCategory, 'EDITOR')] },
     async (request) => {
       const body = updateCategorySchema.parse(request.body);
-      return categoriesService.updateCategory(request.params.id, body);
+      return categoriesService.updateCategory(request.params.id, body, request.user!.id);
     }
   );
 
@@ -38,7 +38,7 @@ export async function categoriesRoutes(app: FastifyInstance) {
     '/categories/:id',
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupCategory, 'EDITOR')] },
     async (request, reply) => {
-      await categoriesService.deleteCategory(request.params.id, request.query.force === 'true');
+      await categoriesService.deleteCategory(request.params.id, request.query.force === 'true', request.user!.id);
       reply.status(204).send();
     }
   );

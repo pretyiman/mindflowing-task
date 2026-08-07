@@ -5,20 +5,59 @@ import { isFilterActive, filterGraph } from '../graph/filterGraph';
 import FilterPanel from './FilterPanel';
 
 interface Props {
+  mapId: string;
   mapName: string;
   onBack: () => void;
   graph: GraphData | null;
+  taskManagementEnabled: boolean;
+  onOpenMapSettings: () => void;
+  isOwner: boolean;
+  onOpenShare: () => void;
+  showGraphFilters?: boolean;
 }
 
-export default function Toolbar({ mapName, onBack, graph }: Props) {
+export default function Toolbar({
+  mapId,
+  mapName,
+  onBack,
+  graph,
+  taskManagementEnabled,
+  onOpenMapSettings,
+  isOwner,
+  onOpenShare,
+  showGraphFilters = true
+}: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const { searchQuery, setSearchQuery, selectedTagIds, selectedGroupId, connectedToNodeId } = useGraphStore();
-  const filterState = { searchQuery, selectedTagIds, selectedGroupId, connectedToNodeId };
+  const {
+    searchQuery,
+    setSearchQuery,
+    selectedTagIds,
+    selectedGroupId,
+    connectedToNodeId,
+    selectedAssigneeId,
+    selectedTaskStatusId,
+    selectedPriority
+  } = useGraphStore();
+  const filterState = {
+    searchQuery,
+    selectedTagIds,
+    selectedGroupId,
+    connectedToNodeId,
+    selectedAssigneeId,
+    selectedTaskStatusId,
+    selectedPriority
+  };
   const filterActive = isFilterActive(filterState);
   // Search box covers name/tags/properties on its own - the advanced popover
   // is only "active" for the dimensions that still live there.
-  const advancedActive = selectedTagIds.length > 0 || selectedGroupId !== null || connectedToNodeId !== null;
+  const advancedActive =
+    selectedTagIds.length > 0 ||
+    selectedGroupId !== null ||
+    connectedToNodeId !== null ||
+    selectedAssigneeId !== null ||
+    selectedTaskStatusId !== null ||
+    selectedPriority !== null;
   const matchCount = graph && filterActive ? filterGraph(graph, filterState).size : null;
 
   return (
@@ -28,6 +67,14 @@ export default function Toolbar({ mapName, onBack, graph }: Props) {
           ← Maps
         </button>
         <h1 className="board-title">{mapName}</h1>
+        {isOwner && (
+          <button className="icon-btn" onClick={onOpenShare} title="Share / invite people">
+            👥
+          </button>
+        )}
+        <button className="icon-btn" onClick={onOpenMapSettings} title="Map Settings">
+          ⚙️
+        </button>
       </div>
 
       {graph && (
@@ -64,7 +111,12 @@ export default function Toolbar({ mapName, onBack, graph }: Props) {
             {showAdvanced && (
               <>
                 <div className="row-menu-scrim" onClick={() => setShowAdvanced(false)} />
-                <FilterPanel graph={graph} />
+                <FilterPanel
+                  mapId={mapId}
+                  graph={graph}
+                  taskManagementEnabled={taskManagementEnabled}
+                  showGraphFilters={showGraphFilters}
+                />
               </>
             )}
           </div>

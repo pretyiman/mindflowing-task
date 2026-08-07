@@ -1,13 +1,22 @@
-import { useState } from 'react';
-import type { GraphData } from '../../types/graph';
+import { useEffect, useState } from 'react';
+import type { GraphData, MapMember } from '../../types/graph';
 import { useGraphStore } from '../../state/graphStore';
+import { useAuthStore } from '../../state/authStore';
+import { mapsApi } from '../../api/maps.api';
 import { filterGraph, isFilterActive } from '../graph/filterGraph';
 
 interface Props {
+  mapId: string;
   graph: GraphData;
+  taskManagementEnabled: boolean;
+  // false for a Project workspace (or the task-only worker view) - there's
+  // no canvas there, so "connected to" tracing has nothing meaningful to
+  // trace through. Group is unaffected: it already hides itself whenever
+  // graph.groups is empty, which is always true in those same contexts.
+  showGraphFilters?: boolean;
 }
 
-export default function FilterPanel({ graph }: Props) {
+export default function FilterPanel({ mapId, graph, taskManagementEnabled, showGraphFilters = true }: Props) {
   const {
     searchQuery,
     selectedTagIds,
@@ -16,23 +25,56 @@ export default function FilterPanel({ graph }: Props) {
     setSelectedGroupId,
     connectedToNodeId,
     setConnectedToNodeId,
+    selectedAssigneeId,
+    setSelectedAssigneeId,
+    selectedTaskStatusId,
+    setSelectedTaskStatusId,
+    selectedPriority,
+    setSelectedPriority,
     clearFilters
   } = useGraphStore();
+  const currentUserId = useAuthStore((s) => s.user?.id);
 
   const [showTagPicker, setShowTagPicker] = useState(false);
+  const [members, setMembers] = useState<MapMember[]>([]);
 
-  const filterState = { searchQuery, selectedTagIds, selectedGroupId, connectedToNodeId };
+  useEffect(() => {
+    if (!taskManagementEnabled) {
+      setMembers([]);
+      return;
+    }
+    mapsApi.members(mapId).then(setMembers);
+  }, [mapId, taskManagementEnabled]);
+
+  const filterState = {
+    searchQuery,
+    selectedTagIds,
+    selectedGroupId,
+    connectedToNodeId,
+    selectedAssigneeId,
+    selectedTaskStatusId,
+    selectedPriority
+  };
   const active = isFilterActive(filterState);
   const matchCount = active ? filterGraph(graph, filterState).size : graph.nodes.length;
   const selectedTags = graph.tags.filter((t) => selectedTagIds.includes(t.id));
   const connectableNodes = graph.nodes;
+  const isMyTasksActive = currentUserId !== undefined && selectedAssigneeId === currentUserId;
 
-  if (graph.tags.length === 0 && graph.groups.length === 0 && graph.nodes.length === 0) return null;
+  if (
+    graph.tags.length === 0 &&
+    graph.groups.length === 0 &&
+    graph.nodes.length === 0 &&
+    !taskManagementEnabled
+  )
+    return null;
 
   return (
     <div className="filter-popover" onClick={(e) => e.stopPropagation()}>
       <p className="hint-text" style={{ margin: 0, width: '100%' }}>
-        Narrow the search box further, or trace connections from a specific node.
+        {showGraphFilters
+          ? 'Narrow the search box further, or trace connections from a specific node.'
+          : 'Narrow the search box further.'}
       </p>
 
       {graph.tags.length > 0 && (
@@ -98,7 +140,7 @@ export default function FilterPanel({ graph }: Props) {
         </select>
       )}
 
-      {connectableNodes.length > 0 && (
+      {showGraphFilters && connectableNodes.length > 0 && (
         <select value={connectedToNodeId ?? ''} onChange={(e) => setConnectedToNodeId(e.target.value || null)}>
           <option value="">Connected to...</option>
           {connectableNodes.map((n) => (
@@ -107,6 +149,55 @@ export default function FilterPanel({ graph }: Props) {
             </option>
           ))}
         </select>
+      )}
+
+      {taskManagementEnabled && (
+        <>
+          {currentUserId !== undefined && (
+            <button
+              className={`action-btn${isMyTasksActive ? ' icon-tool-btn-active' : ''}`}
+              onClick={() => setSelectedAssigneeId(isMyTasksActive ? null : currentUserId)}
+            >
+              🙋 My Tasks
+            </button>
+          )}
+
+          {members.length > 0 && (
+            <select value={selectedAssigneeId ?? ''} onChange={(e) => setSelectedAssigneeId(e.target.value || null)}>
+              <option value="">Assignee...</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name ?? m.email}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {graph.taskStatuses.length > 0 && (
+            <select
+              value={selectedTaskStatusId ?? ''}
+              onChange={(e) => setSelectedTaskStatusId(e.target.value || null)}
+            >
+              <option value="">Status...</option>
+              {graph.taskStatuses.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <select
+            value={selectedPriority ?? ''}
+            onChange={(e) => setSelectedPriority((e.target.value as typeof selectedPriority) || null)}
+          >
+            <option value="">Priority...</option>
+            <option value="LOW">Low</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HIGH">High</option>
+            <option value="URGENT">Urgent</option>
+          </select>
+        </>
       )}
 
       {active && (

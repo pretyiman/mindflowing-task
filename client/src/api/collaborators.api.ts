@@ -8,6 +8,7 @@ export interface Collaborator {
   role: CollaboratorRole;
   createdAt: string;
   user: { id: string; email: string; name: string | null };
+  scopeTagIds: string[];
 }
 
 export interface PendingInvite {
@@ -31,5 +32,7 @@ export const collaboratorsApi = {
     api.post<PendingInvite>(`/maps/${mapId}/collaborators`, data),
   updateRole: (id: string, role: CollaboratorRole) =>
     api.patch<Collaborator>(`/collaborators/${id}`, { role }),
+  updateScope: (id: string, scopeTagIds: string[]) =>
+    api.patch<Collaborator>(`/collaborators/${id}`, { scopeTagIds }),
   remove: (id: string) => api.delete<void>(`/collaborators/${id}`)
 };

@@ -11,6 +11,12 @@ import { groupsRoutes } from './routes/groups.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
 import { collaboratorsRoutes } from './routes/collaborators.routes.js';
 import { invitesRoutes } from './routes/invites.routes.js';
+import { activityRoutes } from './routes/activity.routes.js';
+import { taskStatusesRoutes } from './routes/taskStatuses.routes.js';
+import { taskCommentsRoutes } from './routes/taskComments.routes.js';
+import { notificationsRoutes } from './routes/notifications.routes.js';
+import { taskAttachmentsRoutes } from './routes/taskAttachments.routes.js';
+import { teamsRoutes } from './routes/teams.routes.js';
 
 // Builds the API-only Fastify app - no .listen(), no static-file serving.
 // Shared by index.ts (local dev + Render, which add static serving and call
@@ -42,6 +48,12 @@ export async function createApp(options: { registerNotFoundHandler?: boolean } =
       await api.register(authRoutes);
       await api.register(collaboratorsRoutes);
       await api.register(invitesRoutes);
+      await api.register(activityRoutes);
+      await api.register(taskStatusesRoutes);
+      await api.register(taskCommentsRoutes);
+      await api.register(notificationsRoutes);
+      await api.register(taskAttachmentsRoutes);
+      await api.register(teamsRoutes);
     },
     { prefix: '/api' }
   );

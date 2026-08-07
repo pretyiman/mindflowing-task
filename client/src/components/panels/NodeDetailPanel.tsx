@@ -1,12 +1,24 @@
 import { useEffect, useState } from 'react';
-import type { GraphData, PropertyValue } from '../../types/graph';
+import type { GraphData, MapMember, PropertyValue, TaskPriority } from '../../types/graph';
 import { nodesApi } from '../../api/nodes.api';
 import { edgesApi } from '../../api/edges.api';
 import { tagsApi } from '../../api/tags.api';
 import { groupsApi } from '../../api/groups.api';
 import { categoriesApi } from '../../api/categories.api';
+import { collaboratorsApi, type Collaborator, type PendingInvite } from '../../api/collaborators.api';
+import { nodeAccessApi, type NodeAccess } from '../../api/nodeAccess.api';
+import { mapsApi } from '../../api/maps.api';
 import { ApiError } from '../../api/client';
 import { CATEGORY_ICON_CHOICES } from '../../constants/categoryIcons';
+import TaskDiscussion from '../tasks/TaskDiscussion';
+
+const TASK_PRIORITIES: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+const PRIORITY_LABEL: Record<TaskPriority, string> = {
+  LOW: 'Low',
+  MEDIUM: 'Medium',
+  HIGH: 'High',
+  URGENT: 'Urgent'
+};
 
 interface Props {
   graph: GraphData;
@@ -14,9 +26,21 @@ interface Props {
   onClose: () => void;
   onChanged: () => void;
   canEdit: boolean;
+  isOwner: boolean;
+  restrictedAccessEnabled: boolean;
+  taskManagementEnabled: boolean;
 }
 
-export default function NodeDetailPanel({ graph, selectedNodeId, onClose, onChanged, canEdit }: Props) {
+export default function NodeDetailPanel({
+  graph,
+  selectedNodeId,
+  onClose,
+  onChanged,
+  canEdit,
+  isOwner,
+  restrictedAccessEnabled,
+  taskManagementEnabled
+}: Props) {
   const node = graph.nodes.find((n) => n.id === selectedNodeId) ?? null;
   const group = !node ? (graph.groups.find((g) => g.id === selectedNodeId) ?? null) : null;
   const category = node ? graph.categories.find((c) => c.id === node.categoryId) : null;
@@ -35,6 +59,10 @@ export default function NodeDetailPanel({ graph, selectedNodeId, onClose, onChan
   const [newCatIcon, setNewCatIcon] = useState(CATEGORY_ICON_CHOICES[0]);
   const [newCatColor, setNewCatColor] = useState('#5577aa');
   const [newCatError, setNewCatError] = useState<string | null>(null);
+  const [access, setAccess] = useState<NodeAccess | null>(null);
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [members, setMembers] = useState<MapMember[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
 
   useEffect(() => {
     setName(node?.name ?? '');
@@ -43,6 +71,38 @@ export default function NodeDetailPanel({ graph, selectedNodeId, onClose, onChan
     setError(null);
     setAddingRelation(false);
   }, [node?.id]);
+
+  const showAccessSection = isOwner && restrictedAccessEnabled && !!node;
+
+  useEffect(() => {
+    if (!showAccessSection || !node) {
+      setAccess(null);
+      setCollaborators([]);
+      return;
+    }
+    nodeAccessApi.get(node.id).then(setAccess);
+    collaboratorsApi.list(node.mapId).then((data) => setCollaborators(data.collaborators));
+  }, [node?.id, showAccessSection]);
+
+  useEffect(() => {
+    if (!taskManagementEnabled || !node) {
+      setMembers([]);
+      return;
+    }
+    mapsApi.members(node.mapId).then(setMembers);
+  }, [node?.mapId, taskManagementEnabled]);
+
+  // Independent of showAccessSection (restrictedAccessEnabled) - the
+  // Assignees section needs pending invites regardless, so it can show
+  // *why* someone who was invited (e.g. via a Team) isn't assignable yet:
+  // they haven't logged in and accepted, so they're not a real collaborator.
+  useEffect(() => {
+    if (!taskManagementEnabled || !isOwner || !node) {
+      setPendingInvites([]);
+      return;
+    }
+    collaboratorsApi.list(node.mapId).then((data) => setPendingInvites(data.pendingInvites));
+  }, [node?.mapId, taskManagementEnabled, isOwner]);
 
   useEffect(() => {
     setGroupName(group?.name ?? '');
@@ -168,6 +228,57 @@ export default function NodeDetailPanel({ graph, selectedNodeId, onClose, onChan
     onChanged();
   };
 
+  const handleToggleRestrictToGrantsOnly = async () => {
+    if (!access || !node) return;
+    const next = { ...access, restrictToGrantsOnly: !access.restrictToGrantsOnly };
+    setAccess(next);
+    try {
+      await nodeAccessApi.set(node.id, next);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to update access');
+    }
+  };
+
+  const handleToggleGrant = async (userId: string) => {
+    if (!access || !node) return;
+    const nextUserIds = access.userIds.includes(userId)
+      ? access.userIds.filter((id) => id !== userId)
+      : [...access.userIds, userId];
+    const next = { ...access, userIds: nextUserIds };
+    setAccess(next);
+    try {
+      await nodeAccessApi.set(node.id, next);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to update access');
+    }
+  };
+
+  const handleTaskFieldChange = async (
+    patch: Partial<{
+      isTask: boolean;
+      taskStatusId: string | null;
+      assigneeIds: string[];
+      priority: TaskPriority | null;
+      dueDate: string | null;
+    }>
+  ) => {
+    try {
+      await nodesApi.update(node.id, patch);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to update task');
+    }
+  };
+
+  const handleToggleAssignee = (userId: string) => {
+    const next = node.assigneeIds.includes(userId)
+      ? node.assigneeIds.filter((id) => id !== userId)
+      : [...node.assigneeIds, userId];
+    handleTaskFieldChange({ assigneeIds: next });
+  };
+
   const handleDelete = async () => {
     await nodesApi.remove(node.id);
     onChanged();
@@ -208,7 +319,8 @@ export default function NodeDetailPanel({ graph, selectedNodeId, onClose, onChan
           value={name}
           onChange={(e) => setName(e.target.value)}
           onBlur={handleSaveName}
-          disabled={!canEdit}
+          disabled={!canEdit || (node.isTask && !isOwner)}
+          title={node.isTask && !isOwner ? 'Only the map owner can rename a task' : undefined}
         />
       </h2>
 
@@ -296,6 +408,175 @@ export default function NodeDetailPanel({ graph, selectedNodeId, onClose, onChan
         )}
       </div>
 
+      {taskManagementEnabled && (
+        <div className="property">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={node.isTask}
+              onChange={(e) => handleTaskFieldChange({ isTask: e.target.checked })}
+              disabled={!canEdit}
+            />
+            Track as a task
+          </label>
+          {!node.isTask && (
+            <p className="hint-text" style={{ marginTop: 4, marginBottom: 0 }}>
+              Not tracked as a task, so it won't show up in the task list/board or progress stats.
+            </p>
+          )}
+          {node.isTask && (
+            <>
+              <div className="task-field-grid" style={{ marginTop: 8 }}>
+                <div>
+                  <span className="task-field-label">Status</span>
+                  <select
+                    value={node.taskStatusId ?? ''}
+                    onChange={(e) => handleTaskFieldChange({ taskStatusId: e.target.value || null })}
+                    disabled={!canEdit}
+                  >
+                    <option value="">No status</option>
+                    {graph.taskStatuses.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <span className="task-field-label">Priority</span>
+                  <select
+                    value={node.priority ?? ''}
+                    onChange={(e) => handleTaskFieldChange({ priority: (e.target.value as TaskPriority) || null })}
+                    disabled={!canEdit || !isOwner}
+                    title={!isOwner ? "Only the map owner can change a task's priority" : undefined}
+                  >
+                    <option value="">No priority</option>
+                    {TASK_PRIORITIES.map((p) => (
+                      <option key={p} value={p}>
+                        {PRIORITY_LABEL[p]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <span className="task-field-label">Assignees</span>
+                  {members.length === 0 ? (
+                    <p className="hint-text" style={{ margin: 0 }}>
+                      No members to assign yet.
+                    </p>
+                  ) : (
+                    <div className="tag-chip-list">
+                      {members.map((m) => {
+                        const active = node.assigneeIds.includes(m.id);
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            className={`tag-chip${active ? ' tag-chip-active' : ''}`}
+                            onClick={() => handleToggleAssignee(m.id)}
+                            disabled={!canEdit || !isOwner}
+                            title={!isOwner ? 'Only the map owner can assign or reassign tasks' : undefined}
+                          >
+                            {m.name ?? m.email}
+                          </button>
+                        );
+                      })}
+                      {pendingInvites.map((inv) => (
+                        <button
+                          key={inv.id}
+                          type="button"
+                          className="tag-chip"
+                          disabled
+                          title="Invited but hasn't accepted yet - they'll be assignable once they log in and accept."
+                        >
+                          {inv.email} (pending)
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {canEdit && !isOwner && (
+                    <span className="hint-text" style={{ display: 'block', marginTop: 4, marginBottom: 0 }}>
+                      Only the owner can (re)assign
+                    </span>
+                  )}
+                  {isOwner && members.length <= 1 && pendingInvites.length === 0 && (
+                    <span className="hint-text" style={{ display: 'block', marginTop: 4, marginBottom: 0 }}>
+                      You're the only one on this project - Share it to invite people you can assign tasks to.
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <span className="task-field-label">Due Date</span>
+                  <input
+                    type="date"
+                    value={node.dueDate ? node.dueDate.slice(0, 10) : ''}
+                    onChange={(e) =>
+                      handleTaskFieldChange({ dueDate: e.target.value ? new Date(e.target.value).toISOString() : null })
+                    }
+                    disabled={!canEdit}
+                  />
+                </div>
+              </div>
+              <span className="task-field-label" style={{ marginTop: 12, display: 'block' }}>
+                Notes / Instructions
+              </span>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                onBlur={handleSaveNotes}
+                placeholder="Add instructions, context, or specs for whoever is assigned..."
+                rows={4}
+                disabled={!canEdit}
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {taskManagementEnabled && node.isTask && <TaskDiscussion nodeId={node.id} isOwner={isOwner} />}
+
+      {showAccessSection && (
+        <div className="property">
+          <label>Access</label>
+          {!access ? (
+            <p className="hint-text">Loading access settings...</p>
+          ) : (
+            <>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={access.restrictToGrantsOnly}
+                  onChange={handleToggleRestrictToGrantsOnly}
+                />
+                <span className="hint-text">
+                  Restrict to grants only - ignore tag-based visibility for this node; only you and
+                  the people checked below can see it.
+                </span>
+              </label>
+              {collaborators.length === 0 ? (
+                <p className="hint-text">No collaborators on this map yet.</p>
+              ) : (
+                <div className="tag-chip-list">
+                  {collaborators.map((c) => {
+                    const active = access.userIds.includes(c.user.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={`tag-chip${active ? ' tag-chip-active' : ''}`}
+                        onClick={() => handleToggleGrant(c.user.id)}
+                      >
+                        {c.user.name ?? c.user.email}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <div className="property">
         <label>Properties</label>
         {properties.map(([key, value], idx) => (
@@ -345,17 +626,19 @@ export default function NodeDetailPanel({ graph, selectedNodeId, onClose, onChan
         )}
       </div>
 
-      <div className="property">
-        <label>Notes</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          onBlur={handleSaveNotes}
-          placeholder="Add detailed notes, specs, experience..."
-          rows={6}
-          disabled={!canEdit}
-        />
-      </div>
+      {(!taskManagementEnabled || !node.isTask) && (
+        <div className="property">
+          <label>Notes</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            onBlur={handleSaveNotes}
+            placeholder="Add detailed notes, specs, experience..."
+            rows={6}
+            disabled={!canEdit}
+          />
+        </div>
+      )}
 
       {error && <p className="error-text">{error}</p>}
 

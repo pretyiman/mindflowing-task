@@ -22,8 +22,14 @@ function signToken(userId: string): string {
   return jwt.sign({ sub: userId }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRY } as jwt.SignOptions);
 }
 
-function toPublicUser(user: { id: string; email: string; name: string | null; emailVerified: boolean }) {
-  return { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified };
+function toPublicUser(user: {
+  id: string;
+  email: string;
+  name: string | null;
+  emailVerified: boolean;
+  appMode: 'TASK_MANAGER' | 'MINDFLOW' | 'BOTH';
+}) {
+  return { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified, appMode: user.appMode };
 }
 
 async function issueVerificationToken(userId: string, email: string) {
@@ -147,4 +153,9 @@ export async function changePassword(userId: string, currentPassword: string, ne
 
   const passwordHash = await hashPassword(newPassword);
   await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+}
+
+export async function updateAppMode(userId: string, appMode: 'TASK_MANAGER' | 'MINDFLOW' | 'BOTH') {
+  const user = await prisma.user.update({ where: { id: userId }, data: { appMode } });
+  return toPublicUser(user);
 }

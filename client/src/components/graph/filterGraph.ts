@@ -1,10 +1,13 @@
-import type { GraphData, GraphNode } from '../../types/graph';
+import type { GraphData, GraphNode, TaskPriority } from '../../types/graph';
 
 export interface FilterState {
   searchQuery: string;
   selectedTagIds: string[];
   selectedGroupId: string | null;
   connectedToNodeId: string | null;
+  selectedAssigneeId: string | null;
+  selectedTaskStatusId: string | null;
+  selectedPriority: TaskPriority | null;
 }
 
 export function isFilterActive(filter: FilterState): boolean {
@@ -12,7 +15,10 @@ export function isFilterActive(filter: FilterState): boolean {
     filter.searchQuery.trim() !== '' ||
     filter.selectedTagIds.length > 0 ||
     filter.selectedGroupId !== null ||
-    filter.connectedToNodeId !== null
+    filter.connectedToNodeId !== null ||
+    filter.selectedAssigneeId !== null ||
+    filter.selectedTaskStatusId !== null ||
+    filter.selectedPriority !== null
   );
 }
 
@@ -98,6 +104,25 @@ export function filterGraph(data: GraphData, filter: FilterState): Set<string> {
   if (filter.selectedGroupId) {
     const groupMatch = new Set(data.nodes.filter((n) => n.groupId === filter.selectedGroupId).map((n) => n.id));
     matched = intersect(matched, groupMatch);
+  }
+
+  if (filter.selectedAssigneeId) {
+    const assigneeMatch = new Set(
+      data.nodes.filter((n) => n.assigneeIds.includes(filter.selectedAssigneeId!)).map((n) => n.id)
+    );
+    matched = intersect(matched, assigneeMatch);
+  }
+
+  if (filter.selectedTaskStatusId) {
+    const statusMatch = new Set(
+      data.nodes.filter((n) => n.taskStatusId === filter.selectedTaskStatusId).map((n) => n.id)
+    );
+    matched = intersect(matched, statusMatch);
+  }
+
+  if (filter.selectedPriority) {
+    const priorityMatch = new Set(data.nodes.filter((n) => n.priority === filter.selectedPriority).map((n) => n.id));
+    matched = intersect(matched, priorityMatch);
   }
 
   if (filter.connectedToNodeId) {

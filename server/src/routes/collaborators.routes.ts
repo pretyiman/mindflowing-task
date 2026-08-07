@@ -42,7 +42,7 @@ export async function collaboratorsRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapOwner(lookupCollaborator)] },
     async (request) => {
       const body = updateCollaboratorSchema.parse(request.body);
-      return collaboratorsService.updateCollaboratorRole(request.params.id, body.role);
+      return collaboratorsService.updateCollaborator(request.params.id, body);
     }
   );
 

@@ -16,6 +16,21 @@ model Map {
   ownerId       String?           @map("owner_id")
   name          String
   description   String?
+  // Off by default - every collaborator sees the whole map, exactly as
+  // before this existed. Once on, a collaborator sees nothing until scoped
+  // via a tag (CollaboratorTagScope) or granted a specific node
+  // (NodeAccessGrant) - see visibility.ts for the resolution rule. The
+  // owner always sees everything regardless of this flag.
+  restrictedAccessEnabled Boolean @default(false) @map("restricted_access_enabled")
+  // Off by default - a map that never turns this on has no task fields/UI at
+  // all, same "not everyone needs this" principle as restrictedAccessEnabled.
+  taskManagementEnabled Boolean @default(false) @map("task_management_enabled")
+  // Set once at creation, immutable afterward - switching a map's fundamental
+  // type after real graph/task data exists would be more confusing than
+  // useful. TASKS forces taskManagementEnabled on and the whole client
+  // renders a graph-free task list/board shell instead of the canvas - see
+  // maps.service.ts's createMap and App.tsx's workspace-type branch.
+  workspaceType WorkspaceType     @default(GRAPH) @map("workspace_type")
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
@@ -28,6 +43,9 @@ model Map {
   nodeGroups    NodeGroup[]
   collaborators MapCollaborator[]
   invites       MapInvite[]
+  activityLogs  ActivityLog[]
+  taskStatuses  TaskStatus[]
+  notifications Notification[]
 
   @@map("maps")
 }
@@ -45,14 +63,55 @@ model User {
   googleId           String?                  @unique @map("google_id")
   name               String?
   emailVerified      Boolean                  @default(false) @map("email_verified")
+  // Which surfaces of the app this account sees, account-wide - see AppMode's
+  // own comment. Defaults to BOTH so every existing account is unaffected.
+  appMode            AppMode                  @default(BOTH) @map("app_mode")
   createdAt          DateTime                 @default(now()) @map("created_at")
   updatedAt          DateTime                 @updatedAt @map("updated_at")
 
   maps               Map[]
   collaborations     MapCollaborator[]
   verificationTokens EmailVerificationToken[]
+  nodeAccessGrants   NodeAccessGrant[]
+  activityLogs       ActivityLog[]
+  assignedTasks      NodeAssignee[]
+  taskComments       TaskComment[]
+  notifications      Notification[]
+  taskAttachments    TaskAttachment[]
+  teams              Team[]
 
   @@map("users")
+}
+
+// A reusable, personal roster of people to invite together - not a shared/
+// collaborative entity itself, just a saved list its owner can apply to any
+// of their projects in one action (see ShareModal.tsx's "Apply a team"
+// section, which just loops the existing per-email collaborator invite for
+// each member - a Team never grants access on its own).
+model Team {
+  id        String       @id @default(uuid())
+  ownerId   String       @map("owner_id")
+  name      String
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  owner     User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members   TeamMember[]
+
+  @@map("teams")
+}
+
+// Stored by email, same shape as MapInvite - a team member doesn't need to
+// already have an account; applying the team just invites that email the
+// same way a one-off manual invite would.
+model TeamMember {
+  id     String @id @default(uuid())
+  teamId String @map("team_id")
+  email  String
+
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, email])
+  @@map("team_members")
 }
 
 // Single-use, time-limited token emailed on registration (and on request via
@@ -77,9 +136,62 @@ enum CollaboratorRole {
   EDITOR
 }
 
+enum WorkspaceType {
+  GRAPH
+  TASKS
+}
+
+enum TaskStatusKind {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+// Account-level view: which surfaces of the app a user sees at all, spanning
+// every map they own/collaborate on - independent of any single map's own
+// workspaceType/taskManagementEnabled. BOTH preserves today's per-map hybrid
+// toggle exactly, so every existing account defaults here unaffected.
+enum AppMode {
+  TASK_MANAGER
+  MINDFLOW
+  BOTH
+}
+
+enum NotificationType {
+  ASSIGNED
+  COMMENT
+  MENTION
+  STATUS_CHANGED
+}
+
+// In-app notification, polled (see notifications.ts's fire-and-forget notify()
+// helper) rather than pushed - no websocket/SSE infra exists in this project.
+// nodeId is nullable/SetNull so a deleted task doesn't take its own
+// notification history down with it.
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  mapId     String           @map("map_id")
+  nodeId    String?          @map("node_id")
+  type      NotificationType
+  message   String
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  map  Map  @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  node Node? @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+
+  @@index([userId, read, createdAt])
+  @@map("notifications")
+}
+
 // Grants a non-owner user access to a map. Distinct from Map.ownerId, which
 // remains the single source of truth for who owns/can-delete/can-share the
-// map - a collaborator row is never OWNER, only EDITOR or VIEWER.
+// map - a collaborator row is never OWNER, only EDITOR or VIEWER. Role
+// governs read vs. write on whatever this collaborator can *see* - it no
+// longer implies "sees the whole map" once Map.restrictedAccessEnabled is
+// on (see scopeTags below and visibility.ts).
 model MapCollaborator {
   id        String           @id @default(uuid())
   mapId     String           @map("map_id")
@@ -89,9 +201,28 @@ model MapCollaborator {
 
   map       Map              @relation(fields: [mapId], references: [id], onDelete: Cascade)
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scopeTags CollaboratorTagScope[]
 
   @@unique([mapId, userId])
   @@map("map_collaborators")
+}
+
+// Which tags a collaborator is scoped to when the map has
+// restrictedAccessEnabled on - they see every node carrying any of these
+// tags (live/dynamic: a node tagged after the scoping still shows up
+// automatically), in addition to anything individually granted via
+// NodeAccessGrant. See visibility.ts for the full resolution rule.
+model CollaboratorTagScope {
+  id              String          @id @default(uuid())
+  collaboratorId  String          @map("collaborator_id")
+  tagId           String          @map("tag_id")
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  collaborator    MapCollaborator @relation(fields: [collaboratorId], references: [id], onDelete: Cascade)
+  tag             Tag             @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([collaboratorId, tagId])
+  @@map("collaborator_tag_scopes")
 }
 
 // A shareable invite: created alongside an email invite so the owner can
@@ -188,21 +319,158 @@ model Node {
   posY          Float?        @map("pos_y")
   posZ          Float?        @map("pos_z")
   groupId       String?       @map("group_id")
+  // When true, tag-scope is ignored entirely for this node - only the map
+  // owner and users with an explicit NodeAccessGrant can see it, even if
+  // they're scoped to a tag it carries. Meaningless unless the map also has
+  // restrictedAccessEnabled on. See visibility.ts.
+  restrictToGrantsOnly Boolean @default(false) @map("restrict_to_grants_only")
+  // Whether this node is tracked as a task - meaningless unless the map also
+  // has taskManagementEnabled on. Deliberately separate from "has any task
+  // field set": without this flag, task views (TaskListView/TaskManagerHome/
+  // ProgressPanel) would show every node in a task-enabled map, including
+  // plain content nodes that never had a status/assignee/etc. set. Set true
+  // automatically by the task-creation flow ("+ New Task"); stays false for
+  // ordinary canvas-created nodes unless explicitly promoted via
+  // NodeDetailPanel's "Track as a task" checkbox. There's still no separate
+  // Task model - a task is just a Node with this on.
+  isTask        Boolean       @default(false) @map("is_task")
+  // Task management fields - all nullable/optional, meaningless unless the
+  // map also has taskManagementEnabled on AND isTask is true. Assignment is
+  // multi-person (see NodeAssignee below) - no primary/secondary distinction,
+  // just a set of people accountable for this task.
+  taskStatusId  String?       @map("task_status_id")
+  // Fixed set (Low/Medium/High/Urgent), validated in nodes.schema.ts - unlike
+  // TaskStatus, priority is not customizable per map.
+  priority      String?
+  // Owner-settable planning deadline - see assertActorIsMapOwner in
+  // nodes.service.ts. Distinct from startedAt/completedAt below, which are
+  // never client-editable at all.
+  dueDate       DateTime?     @map("due_date")
+  // Auto-tracked by the server off status-kind transitions (see
+  // nodes.service.ts's updateNode) - never accepted from a client payload.
+  // startedAt is a first-touched marker (set once, never cleared);
+  // completedAt clears if the task moves back out of a DONE-kind status.
+  startedAt     DateTime?     @map("started_at")
+  completedAt   DateTime?     @map("completed_at")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
   map           Map           @relation(fields: [mapId], references: [id], onDelete: Cascade)
   category      NodeCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   group         NodeGroup?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  taskStatus    TaskStatus?   @relation(fields: [taskStatusId], references: [id], onDelete: Restrict)
 
   outgoingEdges Edge[]        @relation("EdgeSource")
   incomingEdges Edge[]        @relation("EdgeTarget")
   nodeTags      NodeTag[]
+  accessGrants  NodeAccessGrant[]
+  comments      TaskComment[]
+  notifications Notification[]
+  attachments   TaskAttachment[]
+  assignees     NodeAssignee[]
 
   @@index([mapId])
   @@index([categoryId])
   @@index([groupId])
+  @@index([taskStatusId])
   @@map("nodes")
+}
+
+// Multi-assignee join - replaces what used to be a single Node.assigneeId FK.
+// No primary/secondary distinction: a task is simply "assigned to" this set
+// of users, all equally accountable. See nodes.service.ts's createNode/
+// updateNode for the full-replace-the-set semantics (a PATCH with
+// assigneeIds sets the complete list, there's no separate add/remove-one
+// endpoint).
+model NodeAssignee {
+  nodeId     String   @map("node_id")
+  userId     String   @map("user_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  node       Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([nodeId, userId])
+  @@map("node_assignees")
+}
+
+// A lightweight discussion thread on any node - visible/postable by anyone
+// who can already SEE the node (VIEWER-level, not EDITOR-level - commenting
+// is lower-friction than editing task fields). authorId is nullable/SetNull
+// so a deleted user's past comments stay on record rather than vanishing,
+// same pattern as ActivityLog.userId.
+model TaskComment {
+  id        String   @id @default(uuid())
+  nodeId    String   @map("node_id")
+  authorId  String?  @map("author_id")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([nodeId, createdAt])
+  @@map("task_comments")
+}
+
+// v1 attachments are pasted links only (a name + a URL the user already has -
+// Drive, Dropbox, an image host), NOT a real file upload - that needs a
+// storage-provider decision (Vercel Blob vs S3-compatible vs other) not made
+// yet. EDITOR-gated (not VIEWER, unlike comments): adding/removing a link
+// modifies the task's own content, not a lightweight discussion reply.
+model TaskAttachment {
+  id         String   @id @default(uuid())
+  nodeId     String   @map("node_id")
+  uploaderId String?  @map("uploader_id")
+  name       String
+  url        String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  node       Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  uploader   User?    @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
+
+  @@index([nodeId, createdAt])
+  @@map("task_attachments")
+}
+
+// Customizable per-map status column (Trello-list style) - mirrors
+// NodeCategory almost exactly. Name/color are fully custom; kind is the
+// fixed 3-way semantic (To Do / In Progress / Done) the system actually
+// reasons about - it drives auto-tracked Node.startedAt/completedAt and
+// progress-monitoring stats. order is a plain manual sort key, no
+// drag/reorder endpoint yet.
+model TaskStatus {
+  id        String         @id @default(uuid())
+  mapId     String         @map("map_id")
+  name      String
+  color     String         @default("#888888")
+  order     Int            @default(0)
+  kind      TaskStatusKind @default(TODO)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  map       Map      @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  nodes     Node[]
+
+  @@unique([mapId, name])
+  @@map("task_statuses")
+}
+
+// Explicit per-node, per-person visibility allowlist - the "fine" layer of
+// scoped access, on top of (or, if the node has restrictToGrantsOnly,
+// instead of) tag-scoping. See visibility.ts for the resolution rule.
+model NodeAccessGrant {
+  id        String   @id @default(uuid())
+  nodeId    String   @map("node_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, userId])
+  @@map("node_access_grants")
 }
 
 // Purely for grouping/filtering/analysis (e.g. "friends of Cris", "family of Michael",
@@ -218,6 +486,7 @@ model Tag {
 
   map       Map       @relation(fields: [mapId], references: [id], onDelete: Cascade)
   nodeTags  NodeTag[]
+  collaboratorScopes CollaboratorTagScope[]
 
   @@unique([mapId, name])
   @@map("tags")
@@ -266,4 +535,27 @@ model Edge {
   @@index([targetNodeId])
   @@index([relationTypeId])
   @@map("edges")
+}
+
+// Owner-visible audit trail of who changed what on a map - addresses "I can't
+// tell what an editor modified." userId is nullable + SetNull so a deleted
+// user's past activity stays on record rather than vanishing. Written
+// best-effort alongside each mutation (see lib/activityLog.ts); never blocks
+// or fails the mutation it's logging.
+model ActivityLog {
+  id         String   @id @default(uuid())
+  mapId      String   @map("map_id")
+  userId     String?  @map("user_id")
+  action     String
+  targetType String   @map("target_type")
+  targetId   String?  @map("target_id")
+  summary    String
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  map        Map      @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([mapId, createdAt])
+  @@map("activity_logs")
 }

@@ -5,6 +5,7 @@ import {
   googleSignInSchema,
   loginSchema,
   registerSchema,
+  updateAppModeSchema,
   verifyEmailSchema
 } from '../schemas/auth.schema.js';
 import * as authService from '../services/auth.service.js';
@@ -29,6 +30,11 @@ export async function authRoutes(app: FastifyInstance) {
     const body = changePasswordSchema.parse(request.body);
     await authService.changePassword(request.user!.id, body.currentPassword, body.newPassword);
     reply.status(204).send();
+  });
+
+  app.patch('/auth/app-mode', { preHandler: requireAuth }, async (request) => {
+    const body = updateAppModeSchema.parse(request.body);
+    return authService.updateAppMode(request.user!.id, body.appMode);
   });
 
   app.post('/auth/verify-email', async (request) => {

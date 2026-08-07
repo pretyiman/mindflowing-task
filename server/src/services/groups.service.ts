@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { ConflictError, NotFoundError } from '../errors.js';
+import { logActivity } from '../lib/activityLog.js';
 
 // Matches CustomNode's actual rendered card (icon-left/name-right, fixed
 // 44px height, 14px/500-weight text). GROUP_MARGIN is the small fixed gap
@@ -59,7 +60,11 @@ async function getGroupOrThrow(id: string) {
  * does the actual box-fitting math immediately after, exactly as it would after
  * any later drag, so creation and drag-driven resizing can never disagree.
  */
-export async function createGroup(mapId: string, data: { nodeIds: string[]; name?: string; color?: string }) {
+export async function createGroup(
+  mapId: string,
+  data: { nodeIds: string[]; name?: string; color?: string },
+  actorId: string
+) {
   if (data.nodeIds.length < 2) throw new ConflictError('Select at least 2 nodes to group');
 
   const group = await prisma.$transaction(async (tx) => {
@@ -105,7 +110,16 @@ export async function createGroup(mapId: string, data: { nodeIds: string[]; name
     return created;
   });
 
-  return resizeGroupToFitMembers(group.id);
+  const resized = await resizeGroupToFitMembers(group.id);
+  await logActivity(
+    mapId,
+    actorId,
+    'create',
+    'group',
+    group.id,
+    `Grouped ${data.nodeIds.length} nodes${group.name ? ` as "${group.name}"` : ''}`
+  );
+  return resized;
 }
 
 /**
@@ -157,17 +171,26 @@ export async function resizeGroupToFitMembers(groupId: string) {
   });
 }
 
-export async function updateGroup(id: string, data: GroupUpdateInput) {
-  await getGroupOrThrow(id);
-  return prisma.nodeGroup.update({ where: { id }, data });
+export async function updateGroup(id: string, data: GroupUpdateInput, actorId: string) {
+  const existing = await getGroupOrThrow(id);
+  const updated = await prisma.nodeGroup.update({ where: { id }, data });
+  await logActivity(
+    existing.mapId,
+    actorId,
+    'update',
+    'group',
+    id,
+    `Updated group "${updated.name || existing.name || 'Unnamed'}"`
+  );
+  return updated;
 }
 
 /** Ungroups (never deletes) every member, converting each back to an absolute
  * position first so nothing visually jumps once it's independent again. */
-export async function deleteGroup(id: string) {
+export async function deleteGroup(id: string, actorId: string) {
   const group = await getGroupOrThrow(id);
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const members = await tx.node.findMany({ where: { groupId: id } });
     await Promise.all(
       members.map((n) =>
@@ -183,4 +206,6 @@ export async function deleteGroup(id: string) {
     );
     await tx.nodeGroup.delete({ where: { id } });
   });
+
+  await logActivity(group.mapId, actorId, 'delete', 'group', id, `Ungrouped "${group.name || 'Unnamed'}"`);
 }

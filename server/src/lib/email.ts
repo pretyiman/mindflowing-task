@@ -59,3 +59,38 @@ export async function sendVerificationEmail(to: string, token: string) {
     console.log('[email] Ethereal test mode - preview:', nodemailer.getTestMessageUrl(info));
   }
 }
+
+// Both fields here are user-editable (task/map name), unlike
+// sendVerificationEmail's server-generated token/URL - escape before
+// interpolating into HTML so a task or map named with markup can't render
+// as live HTML (links, styling, etc.) in the assignee's inbox.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export async function sendTaskAssignmentEmail(to: string, taskName: string, mapName: string) {
+  const transporter = await getTransporter();
+  const safeTaskName = escapeHtml(taskName);
+  const safeMapName = escapeHtml(mapName);
+
+  const info = await transporter.sendMail({
+    from: env.SMTP_FROM,
+    to,
+    subject: `You've been assigned "${taskName}" in ${mapName}`,
+    text: `You've been assigned a task in the Mindflow map "${mapName}":\n\n${taskName}\n\n${env.APP_URL}`,
+    html: `
+      <p>You've been assigned a task in the Mindflow map <strong>${safeMapName}</strong>:</p>
+      <p style="font-size: 1.1em"><strong>${safeTaskName}</strong></p>
+      <p><a href="${env.APP_URL}">${env.APP_URL}</a></p>
+    `
+  });
+
+  if (usingEthereal) {
+    console.log('[email] Ethereal test mode - preview:', nodemailer.getTestMessageUrl(info));
+  }
+}

@@ -61,13 +61,128 @@ See the "Mindflow Explained" map (built in-app, in the user's own account) for a
 - Client-side, `myRole` on each map (`MapRole = 'OWNER' | 'EDITOR' | 'VIEWER'`) gates edit
   affordances (Add Node, quick-add, Save/Delete in modals) - display-only; the real enforcement is
   server-side.
+- **Collaborator role vs. visibility scope - two separate axes, easy to conflate (a real support
+  question this session).** `MapCollaborator.role` (EDITOR/VIEWER) is *permission level* - can they
+  edit vs. only view. It has nothing to do with *what they can see*. That's `restrictedAccessEnabled`
+  + `NodeAccessGrant`/`CollaboratorTagScope` (see `visibility.ts`'s `getVisibleNodeIdFilter`,
+  Scoped Access in the data model above) - off by default, meaning every collaborator sees the
+  whole map. To give someone access to work on **one specific task without seeing anything else in
+  the project** (e.g. an outside contractor who shouldn't see business-sensitive nodes): (1) turn on
+  Restricted Access in Map Settings - this alone makes every non-owner collaborator see *nothing* by
+  default; (2) grant that person a `NodeAccessGrant` on just the task(s) they need, from that task's
+  own Access section in `TaskEditPanel`/`NodeDetailPanel`. This is enforced server-side in
+  `getGraph` itself (a restricted node never even appears in the API response, not just hidden by
+  the UI) and on every per-node endpoint (`requireNodeVisible()`). They still need to *accept* a
+  real invite first (unavoidable - some access record has to exist before scoping means anything),
+  but accepting doesn't imply seeing everything; that's this separate, additional step.
+
+## Account-level App Mode (`User.appMode`)
+
+Independent of any single map's own `workspaceType`/`taskManagementEnabled`, an account has one of
+three modes (`AppMode` enum: `TASK_MANAGER | MINDFLOW | BOTH`, default `BOTH`), set via Account
+Settings (`PATCH /auth/app-mode`) and applied everywhere, across every map the user opens:
+
+- **`BOTH`** (default) - today's per-map hybrid: a task-enabled `GRAPH` map can show canvas or task
+  list, manually toggled (`viewOverride` in `graphStore.ts`), defaulting to canvas for the owner and
+  the task list for everyone else. Every existing account stays on this until it opts into one of
+  the others, so this mode must never change behavior.
+- **`MINDFLOW`** - task UI is fully suppressed everywhere, even on a map whose owner has task
+  management on. Implemented as a single derived value in `App.tsx`
+  (`effectiveTaskManagementEnabled`, forced `false` in this mode) threaded to every place that used
+  to read `currentMap.taskManagementEnabled` directly (`Toolbar`, `GraphCanvas`, `NodeDetailPanel`)
+  - those components already gated their task-only buttons/fields behind that one boolean, so no
+  changes were needed inside them. `MapsListPage` also hides `TASKS`-workspace maps entirely (a map
+  with zero canvas has nothing to show in this mode) and drops the Mind-Map/Task-Board type picker
+  from "+ New Map" (always creates `GRAPH`).
+- **`TASK_MANAGER`** - the mirror image: task list is forced everywhere (`effectiveView` always
+  `'tasks'`, no per-map toggle button), and the landing screen after login is
+  `TaskManagerHome.tsx` instead of `MapsListPage` - a cross-map "My Work" aggregate that fetches
+  every task-enabled map's graph/members in parallel (reusing `useGraphData`'s own query key so
+  opening a map from here doesn't refetch) and groups tasks by map. It's a **navigation surface,
+  not an editor** - clicking a task calls `setCurrentMapId` + `selectNode`, which
+  `TaskListView.tsx`'s `initialTaskId`/`onInitialTaskConsumed` props pick up to auto-open that exact
+  task's `TaskEditPanel` on arrival, reusing the single-map task-editing UI rather than
+  reimplementing it. Its own "+ New Project" always creates a `TASKS`-workspace map (no picker).
+
+A `GRAPH` map with task management **off**, opened by a `TASK_MANAGER`-mode user (e.g. via an invite
+link), is a known, accepted gap: it still forces the task list, showing an empty state rather than
+that map's real canvas content. Not solved - rare and non-destructive.
 
 ## Feature implementation status
 
 All of the following are implemented and working, not planned:
 
 - Accounts (register/login/JWT), per-map ownership, role-based sharing (EDITOR/VIEWER via
-  collaborator rows or shareable invite links), account settings (change password).
+  collaborator rows or shareable invite links), account settings (change password, app mode).
+- Task management: `Node.isTask` (explicit opt-in - see its own schema.prisma comment; NOT implied
+  by having a category/tags/properties, and not even implied by taskManagementEnabled alone) marks
+  a node as a task; only then do status/assignee/priority/due date (+ auto-tracked start/complete
+  timestamps) apply and the node shows up in any task view (`TaskListView`, `TaskManagerHome`,
+  `ProgressPanel` - all three must agree on this one definition, don't let them drift apart again).
+  Per-map customizable `TaskStatus` list, a `TASKS`-only map `workspaceType` for a zero-canvas task
+  board (every node there is `isTask: true` by construction - there's no canvas to have made a plain
+  content node from) - called a **"Project" in the UI** (the picker, creation flows, settings copy),
+  though the underlying enum value stays `workspaceType: 'TASKS'`; per-task threaded discussion
+  (comments + activity merged in one timeline, anyone who can see the task can comment); and the
+  account-level App Mode described above for a
+  fully separate Task-Manager-only or Mindflow-only experience. `NodeDetailPanel.tsx`'s "Track as a
+  task" checkbox promotes/demotes an ordinary canvas node; unchecking never clears the underlying
+  task fields, so re-checking it restores exactly what was there.
+- **Plane-style task manager feature set** (all implemented on top of the above): **sub-tasks**
+  reuse Edge/RelationType rather than a parent/child column - a built-in "Sub-task of"
+  `RelationType` (`isHierarchy: true`) is lazily get-or-created per map on first use
+  (`nodes.service.ts`'s `createSubtask`/`getOrCreateSubtaskRelationType`), so this works on maps
+  created before sub-tasks existed too, no backfill needed; `TaskEditPanel.tsx` shows a flat
+  "Sub-tasks" list with a done/total count and a "Sub-task of X" breadcrumb, `TaskListView` itself
+  stays flat (sub-tasks also appear as ordinary top-level rows - intentional, not a bug).
+  **Kanban board**: `TaskBoardLayout.tsx`, a frontend-only List/Board toggle in `TaskListView.tsx`
+  reusing the exact same grouped-by-status data the list view already computes; native HTML5
+  drag-and-drop, no new dependency, no intra-column reordering.
+  **In-app notifications**: `Notification` model, polled (not pushed - no websocket/SSE infra
+  exists) via `server/src/lib/notifications.ts`'s fire-and-forget `notify()`, fired on task
+  assignment (alongside the existing email) and on commenting on someone else's assigned task
+  (never self-notifies); bell icon + unread badge in `AccountBadge.tsx`, React Query
+  `refetchInterval` polling every 45s, clicking a notification marks it read and navigates straight
+  to that map/task via the same `setCurrentMapId`+`selectNode` pair `TaskManagerHome` uses.
+  **Attachments**: v1 is pasted links only (name + URL), NOT real file upload - that needs a
+  storage-provider decision not yet made. EDITOR-gated (unlike comments, which are VIEWER-level) -
+  adding/removing a link modifies the task's own content, not a lightweight discussion reply.
+- **Projects, Teams, multi-assignee, owner dashboard**: a `TASKS`-workspace map is called a
+  **"Project"** everywhere in the UI (picker, creation flows, settings copy) - purely a display
+  label, `workspaceType: 'TASKS'` is unchanged underneath. **Teams** (`Team`/`TeamMember`, stored by
+  email like `MapInvite`) are a personal, reusable roster - `ManageTeamsModal.tsx` (via
+  `AccountBadge.tsx`'s account menu) to create/edit one, `ShareModal.tsx`'s "Apply a team" section
+  to invite every member to a project in one action by looping the existing per-email
+  `collaboratorsApi.invite` call; a `Team` never grants access on its own and is always optional -
+  project creation itself never requires one. **Task assignment is multi-person**
+  (`NodeAssignee` join table, replacing what used to be a single `Node.assigneeId` FK - no
+  primary/secondary distinction, just a set of equally-accountable people). `nodes.service.ts`'s
+  `updateNode` takes `assigneeIds` with full-replace-the-set semantics (a PATCH sets the complete
+  list; there's no add/remove-one endpoint) and diffs old-vs-new to notify/email only the
+  newly-added assignees, never someone already on the task. Every assignee-display surface
+  (`TaskEditPanel`/`NodeDetailPanel`'s assignee picker - a `tag-chip-list` toggle, same pattern as
+  Tags/Access, not a `<select>`; `TaskListView`/`TaskManagerHome`/`TaskBoardLayout` row/card text;
+  `CustomNode.tsx`'s canvas badge, which shows the first assignee's initial plus a `+N` suffix; and
+  `ProgressPanel.tsx`'s "By Assignee" stat, where a multi-assignee task now correctly counts once
+  under each assignee) was updated together - keep them agreeing if this changes again. The
+  **Projects Dashboard** (`ProjectsDashboard.tsx`) renders **inline, always visible** at the top of
+  `TaskManagerHome.tsx` - deliberately NOT behind a button/modal (an earlier version was, and got
+  flagged as a real usability miss: the "how are my projects doing" answer should be on the page,
+  not an extra click away). Scoped to projects the current user **owns** (mirrors the map-wide
+  `ActivityLog`'s owner-only visibility) - a frontend-only per-project stat snapshot (reusing
+  `ProgressPanel`'s exact formulas) plus a tasks-completed-per-day sparkline built from
+  `Node.completedAt`, with no new backend endpoint and no historical-snapshot infrastructure (that
+  would be needed for a real burndown chart, which this deliberately isn't).
+  `TaskManagerHome.tsx`'s scope toggle defaults to **"All Tasks", not "My Tasks"** - defaulting to
+  assigned-to-me made an owner's own freshly-created, not-yet-assigned work invisible on their very
+  first visit into a brand-new project, which is exactly the kind of empty-looking-but-not-actually-
+  empty state to avoid. Sharing/team-assignment entry points exist in three places, since a first
+  real run showed they weren't obvious enough from just the account menu: `AccountBadge.tsx`'s
+  account menu ("👥 Manage Teams"), `TaskManagerHome.tsx`'s own header (same action, one click
+  closer), and `Toolbar.tsx`'s owner-only "👥" icon next to Map Settings (opens `ShareModal` from
+  *inside* an open project - there used to be no way to reach Share without first going back to the
+  maps list). `TaskEditPanel`/`NodeDetailPanel`'s Assignees section also shows a "You're the only
+  one on this project" hint whenever `members.length <= 1`, pointing at Share directly.
 - Full graph CRUD: nodes, edges (with 4-handle connection points and per-edge label/color/style
   overrides), categories, relation types (with directional/hierarchy flags and per-relation-type
   in/out degree caps), tags (many-to-many, filterable).

@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { ConflictError, NotFoundError } from '../errors.js';
+import { logActivity } from '../lib/activityLog.js';
 
 type RelationTypeInput = {
   name: string;
@@ -15,9 +16,10 @@ export async function listRelationTypes(mapId: string) {
   return prisma.relationType.findMany({ where: { mapId }, orderBy: { createdAt: 'asc' } });
 }
 
-export async function createRelationType(mapId: string, data: RelationTypeInput) {
+export async function createRelationType(mapId: string, data: RelationTypeInput, actorId: string) {
+  let relationType;
   try {
-    return await prisma.relationType.create({ data: { mapId, ...data } });
+    relationType = await prisma.relationType.create({ data: { mapId, ...data } });
   } catch (err: any) {
     if (err?.code === 'P2002') {
       throw new ConflictError(`A relation type named "${data.name}" already exists in this map`);
@@ -27,6 +29,15 @@ export async function createRelationType(mapId: string, data: RelationTypeInput)
     }
     throw err;
   }
+  await logActivity(
+    mapId,
+    actorId,
+    'create',
+    'relationType',
+    relationType.id,
+    `Created relation type "${relationType.name}"`
+  );
+  return relationType;
 }
 
 async function getRelationTypeOrThrow(id: string) {
@@ -35,20 +46,30 @@ async function getRelationTypeOrThrow(id: string) {
   return relationType;
 }
 
-export async function updateRelationType(id: string, data: Partial<RelationTypeInput>) {
-  await getRelationTypeOrThrow(id);
+export async function updateRelationType(id: string, data: Partial<RelationTypeInput>, actorId: string) {
+  const existing = await getRelationTypeOrThrow(id);
+  let updated;
   try {
-    return await prisma.relationType.update({ where: { id }, data });
+    updated = await prisma.relationType.update({ where: { id }, data });
   } catch (err: any) {
     if (err?.code === 'P2002') {
       throw new ConflictError(`A relation type named "${data.name}" already exists in this map`);
     }
     throw err;
   }
+  await logActivity(
+    existing.mapId,
+    actorId,
+    'update',
+    'relationType',
+    id,
+    `Updated relation type "${updated.name}"`
+  );
+  return updated;
 }
 
-export async function deleteRelationType(id: string, force: boolean) {
-  await getRelationTypeOrThrow(id);
+export async function deleteRelationType(id: string, force: boolean, actorId: string) {
+  const existing = await getRelationTypeOrThrow(id);
   const edgeCount = await prisma.edge.count({ where: { relationTypeId: id } });
   if (edgeCount > 0 && !force) {
     throw new ConflictError(
@@ -60,4 +81,12 @@ export async function deleteRelationType(id: string, force: boolean) {
     await prisma.edge.deleteMany({ where: { relationTypeId: id } });
   }
   await prisma.relationType.delete({ where: { id } });
+  await logActivity(
+    existing.mapId,
+    actorId,
+    'delete',
+    'relationType',
+    id,
+    `Deleted relation type "${existing.name}"`
+  );
 }

@@ -1,5 +1,7 @@
 export type MapRole = 'OWNER' | 'EDITOR' | 'VIEWER';
 
+export type WorkspaceType = 'GRAPH' | 'TASKS';
+
 export interface MindMap {
   id: string;
   name: string;
@@ -7,6 +9,28 @@ export interface MindMap {
   createdAt: string;
   updatedAt: string;
   myRole: MapRole;
+  restrictedAccessEnabled: boolean;
+  taskManagementEnabled: boolean;
+  workspaceType: WorkspaceType;
+}
+
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+export type TaskStatusKind = 'TODO' | 'IN_PROGRESS' | 'DONE';
+
+export interface TaskStatus {
+  id: string;
+  mapId: string;
+  name: string;
+  color: string;
+  order: number;
+  kind: TaskStatusKind;
+}
+
+export interface MapMember {
+  id: string;
+  email: string;
+  name: string | null;
+  role: MapRole;
 }
 
 export interface NodeCategory {
@@ -53,6 +77,22 @@ export interface GraphNode {
   posY: number | null;
   tagIds: string[];
   groupId: string | null;
+  restrictToGrantsOnly: boolean;
+  hasAccessGrants: boolean;
+  // Whether this node is tracked as a task - see schema.prisma's own comment
+  // on Node.isTask. False for ordinary canvas content nodes even on a map
+  // with task management enabled.
+  isTask: boolean;
+  taskStatusId: string | null;
+  // Multi-assignee, no primary/secondary distinction - see NodeAssignee's
+  // own schema.prisma comment. Empty array, never null, when unassigned.
+  assigneeIds: string[];
+  priority: TaskPriority | null;
+  dueDate: string | null;
+  // Auto-tracked server-side, never client-editable - see the schema.prisma
+  // comment on Node.startedAt/completedAt for the exact transition rules.
+  startedAt: string | null;
+  completedAt: string | null;
 }
 
 export interface NodeGroup {
@@ -90,6 +130,7 @@ export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
   groups: NodeGroup[];
+  taskStatuses: TaskStatus[];
 }
 
 export interface ApiErrorBody {

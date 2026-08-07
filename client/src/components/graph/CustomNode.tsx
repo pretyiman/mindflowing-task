@@ -1,11 +1,36 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
+import type { TaskPriority } from '../../types/graph';
 import type { RFEntityNode } from './graphAdapter';
 import { useNodeInteraction } from './NodeInteractionContext';
 
+const PRIORITY_COLOR: Record<TaskPriority, string> = {
+  LOW: '#8899aa',
+  MEDIUM: '#4a90d9',
+  HIGH: '#e08a3c',
+  URGENT: '#d94f4f'
+};
+
+function formatDueDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 export default function CustomNode({ id, data, selected }: NodeProps<RFEntityNode>) {
-  const { categories, onQuickAdd, canEdit } = useNodeInteraction();
+  const { categories, onQuickAdd, canEdit, isOwner, taskManagementEnabled, taskStatuses, members } =
+    useNodeInteraction();
+  const isRestricted = isOwner && (data.raw.restrictToGrantsOnly || data.raw.hasAccessGrants);
+
+  const isTrackedTask = taskManagementEnabled && data.raw.isTask;
+  const taskStatus = isTrackedTask ? taskStatuses.find((s) => s.id === data.raw.taskStatusId) : undefined;
+  const assignees = isTrackedTask
+    ? data.raw.assigneeIds.map((aid) => members.find((m) => m.id === aid)).filter((m): m is NonNullable<typeof m> => !!m)
+    : [];
+  const isOverdue =
+    isTrackedTask &&
+    !!data.raw.dueDate &&
+    taskStatus?.kind !== 'DONE' &&
+    new Date(data.raw.dueDate) < new Date();
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [name, setName] = useState('');
   const [categoryId, setCategoryId] = useState(data.categoryId ?? '');
@@ -57,8 +82,9 @@ export default function CustomNode({ id, data, selected }: NodeProps<RFEntityNod
 
   return (
     <div
-      className={`flow-node${selected ? ' flow-node-selected' : ''}`}
-      style={{ borderColor: data.color }}
+      className={`flow-node${selected ? ' flow-node-selected' : ''}${isOverdue ? ' flow-node-overdue' : ''}`}
+      style={{ borderColor: isOverdue ? undefined : data.color }}
+      title={data.raw.dueDate ? `Due ${formatDueDate(data.raw.dueDate)}${isOverdue ? ' (overdue)' : ''}` : undefined}
     >
       {/* Four connection points with a fixed in/out convention (mirrors mindmup's
           top-down tree plus left-right pairing): top/left always receive a wire,
@@ -74,6 +100,40 @@ export default function CustomNode({ id, data, selected }: NodeProps<RFEntityNod
       <span className="flow-node-name" title={data.name}>
         {data.name}
       </span>
+      {isRestricted && (
+        <span
+          className="flow-node-lock-badge"
+          title={data.raw.restrictToGrantsOnly ? 'Restricted to specific people' : 'Has extra per-person access grants'}
+        >
+          🔒
+        </span>
+      )}
+
+      {taskManagementEnabled && data.raw.priority && (
+        <span
+          className="flow-node-priority-dot"
+          style={{ background: PRIORITY_COLOR[data.raw.priority] }}
+          title={`Priority: ${data.raw.priority.charAt(0)}${data.raw.priority.slice(1).toLowerCase()}`}
+        />
+      )}
+
+      {taskManagementEnabled && assignees.length > 0 && (
+        <span
+          className="flow-node-assignee-badge"
+          title={`Assigned to ${assignees.map((a) => a.name ?? a.email).join(', ')}`}
+        >
+          {(assignees[0].name ?? assignees[0].email).charAt(0).toUpperCase()}
+          {assignees.length > 1 ? `+${assignees.length - 1}` : ''}
+        </span>
+      )}
+
+      {taskManagementEnabled && taskStatus && (
+        <span
+          className="flow-node-status-strip"
+          style={{ background: taskStatus.color }}
+          title={`Status: ${taskStatus.name}`}
+        />
+      )}
 
       {selected && canEdit && (
         <button

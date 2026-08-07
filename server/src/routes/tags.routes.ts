@@ -21,7 +21,7 @@ export async function tagsRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireMapAccess('EDITOR')] },
     async (request, reply) => {
       const body = createTagSchema.parse(request.body);
-      const tag = await tagsService.createTag(request.params.mapId, body);
+      const tag = await tagsService.createTag(request.params.mapId, body, request.user!.id);
       reply.status(201).send(tag);
     }
   );
@@ -31,7 +31,7 @@ export async function tagsRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupTag, 'EDITOR')] },
     async (request) => {
       const body = updateTagSchema.parse(request.body);
-      return tagsService.updateTag(request.params.id, body);
+      return tagsService.updateTag(request.params.id, body, request.user!.id);
     }
   );
 
@@ -39,7 +39,7 @@ export async function tagsRoutes(app: FastifyInstance) {
     '/tags/:id',
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupTag, 'EDITOR')] },
     async (request, reply) => {
-      await tagsService.deleteTag(request.params.id, request.query.force === 'true');
+      await tagsService.deleteTag(request.params.id, request.query.force === 'true', request.user!.id);
       reply.status(204).send();
     }
   );

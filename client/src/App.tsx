@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { mapsApi } from './api/maps.api';
+import type { WorkspaceType } from './types/graph';
 import { useGraphData } from './hooks/useGraphData';
 import { useGraphStore } from './state/graphStore';
 import { useAuthStore } from './state/authStore';
@@ -14,11 +15,18 @@ import InviteAcceptPage from './components/invite/InviteAcceptPage';
 import NodeDetailPanel from './components/panels/NodeDetailPanel';
 import Toolbar from './components/panels/Toolbar';
 import MapsListPage from './components/maps/MapsListPage';
+import TaskManagerHome from './components/tasks/TaskManagerHome';
 import ManageCategoriesModal from './components/settings/ManageCategoriesModal';
 import ManageRelationTypesModal from './components/settings/ManageRelationTypesModal';
 import ManageTagsModal from './components/settings/ManageTagsModal';
+import ManageTaskStatusesModal from './components/settings/ManageTaskStatusesModal';
+import ActivityPanel from './components/panels/ActivityPanel';
+import ProgressPanel from './components/panels/ProgressPanel';
 import ShareModal from './components/settings/ShareModal';
+import MapSettingsModal from './components/settings/MapSettingsModal';
 import AccountSettingsModal from './components/settings/AccountSettingsModal';
+import ManageTeamsModal from './components/settings/ManageTeamsModal';
+import TaskListView from './components/tasks/TaskListView';
 
 function matchInviteToken(): string | null {
   const match = window.location.pathname.match(/^\/invite\/([^/]+)$/);
@@ -57,10 +65,22 @@ export default function App() {
     setManageRelationTypesOpen,
     isManageTagsOpen,
     setManageTagsOpen,
+    isManageTaskStatusesOpen,
+    setManageTaskStatusesOpen,
+    isActivityOpen,
+    setActivityOpen,
+    isProgressOpen,
+    setProgressOpen,
+    isMapSettingsOpen,
+    setMapSettingsOpen,
     isAccountSettingsOpen,
     setAccountSettingsOpen,
+    isManageTeamsOpen,
+    setManageTeamsOpen,
     shareModalMapId,
-    setShareModalMapId
+    setShareModalMapId,
+    viewOverride,
+    setViewOverride
   } = useGraphStore();
 
   const mapsQuery = useQuery({ queryKey: ['maps'], queryFn: mapsApi.list, enabled: !!token });
@@ -70,6 +90,35 @@ export default function App() {
   // so edit affordances never flash on before the real role is known.
   const myRole = currentMap?.myRole ?? 'VIEWER';
   const canEdit = myRole === 'OWNER' || myRole === 'EDITOR';
+  const isOwner = myRole === 'OWNER';
+  const isTasksWorkspace = currentMap?.workspaceType === 'TASKS';
+  // Account-level view, spanning every map - see AppMode's own schema comment.
+  // MINDFLOW suppresses task UI everywhere, even on a map whose owner has task
+  // management on; TASK_MANAGER forces the task list everywhere, with no
+  // canvas escape hatch. BOTH (the default) is today's unchanged per-map
+  // hybrid toggle.
+  const appMode = user?.appMode ?? 'BOTH';
+  const effectiveTaskManagementEnabled =
+    appMode === 'MINDFLOW' ? false : (currentMap?.taskManagementEnabled ?? false);
+  // A GRAPH map with task management on can show either the canvas or the
+  // task list, for anyone - owner defaults to canvas, everyone else defaults
+  // to "My Tasks", but either can flip via the toggle (viewOverride) for the
+  // rest of this visit. A TASKS workspace has no canvas at all, so it's
+  // unaffected by any of this.
+  const taskManagementOnGraphMap = !isTasksWorkspace && effectiveTaskManagementEnabled;
+  const defaultView = isOwner ? 'canvas' : 'tasks';
+  const effectiveView =
+    appMode === 'MINDFLOW'
+      ? 'canvas'
+      : appMode === 'TASK_MANAGER'
+        ? 'tasks'
+        : taskManagementOnGraphMap
+          ? (viewOverride ?? defaultView)
+          : 'canvas';
+  const showTaskListView = isTasksWorkspace || effectiveView === 'tasks';
+  // The manual per-map toggle button only makes sense under BOTH - under the
+  // other two modes the view is forced with no escape hatch.
+  const canToggleView = appMode === 'BOTH' && taskManagementOnGraphMap;
 
   // Handled before the logged-in check: someone can open a verification link
   // in a browser where they aren't (or no longer are) logged in, and the
@@ -110,8 +159,8 @@ export default function App() {
     );
   }
 
-  const handleCreateMap = async (name: string) => {
-    const map = await mapsApi.create({ name });
+  const handleCreateMap = async (name: string, workspaceType: WorkspaceType) => {
+    const map = await mapsApi.create({ name, workspaceType });
     await queryClient.invalidateQueries({ queryKey: ['maps'] });
     setCurrentMapId(map.id);
   };
@@ -126,25 +175,73 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <AccountBadge onOpenSettings={() => setAccountSettingsOpen(true)} />
+      <AccountBadge
+        onOpenSettings={() => setAccountSettingsOpen(true)}
+        onOpenTeams={() => setManageTeamsOpen(true)}
+        onOpenNotification={(mapId, nodeId) => {
+          setCurrentMapId(mapId);
+          if (nodeId) selectNode(nodeId);
+        }}
+      />
 
       {!currentMapId ? (
-        <MapsListPage
-          maps={mapsQuery.data ?? []}
-          onOpenMap={setCurrentMapId}
-          onCreateMap={handleCreateMap}
-          onDeleteMap={handleDeleteMap}
-          onShareMap={setShareModalMapId}
-        />
+        appMode === 'TASK_MANAGER' ? (
+          <TaskManagerHome
+            maps={mapsQuery.data ?? []}
+            onOpenMap={setCurrentMapId}
+            onOpenTask={(mapId, nodeId) => {
+              setCurrentMapId(mapId);
+              selectNode(nodeId);
+            }}
+            onCreateMap={handleCreateMap}
+            onOpenTeams={() => setManageTeamsOpen(true)}
+          />
+        ) : (
+          <MapsListPage
+            maps={
+              appMode === 'MINDFLOW'
+                ? (mapsQuery.data ?? []).filter((m) => m.workspaceType !== 'TASKS')
+                : (mapsQuery.data ?? [])
+            }
+            onOpenMap={setCurrentMapId}
+            onCreateMap={handleCreateMap}
+            onDeleteMap={handleDeleteMap}
+            onShareMap={setShareModalMapId}
+            allowTaskBoards={appMode !== 'MINDFLOW'}
+          />
+        )
       ) : (
         <>
           <div className="main-column">
             <Toolbar
+              mapId={currentMapId}
               mapName={currentMap?.name ?? ''}
               onBack={() => setCurrentMapId(null)}
               graph={graphQuery.data ?? null}
+              taskManagementEnabled={effectiveTaskManagementEnabled}
+              onOpenMapSettings={() => setMapSettingsOpen(true)}
+              isOwner={isOwner}
+              onOpenShare={() => setShareModalMapId(currentMapId)}
+              showGraphFilters={!showTaskListView}
             />
-            {graphQuery.data ? (
+            {!graphQuery.data ? (
+              <div className="empty-state">Loading graph...</div>
+            ) : showTaskListView ? (
+              <TaskListView
+                mapId={currentMapId}
+                graph={graphQuery.data}
+                scope={isTasksWorkspace || isOwner ? 'all' : 'mine'}
+                canEdit={canEdit}
+                isOwner={isOwner}
+                restrictedAccessEnabled={currentMap?.restrictedAccessEnabled ?? false}
+                onOpenTaskStatuses={() => setManageTaskStatusesOpen(true)}
+                onOpenTags={isTasksWorkspace ? () => setManageTagsOpen(true) : undefined}
+                onViewFullMap={canToggleView ? () => setViewOverride('canvas') : undefined}
+                onChanged={handleGraphChanged}
+                initialTaskId={selectedNodeId}
+                onInitialTaskConsumed={clearSelection}
+              />
+            ) : (
               <GraphCanvas
                 mapId={currentMapId}
                 data={graphQuery.data}
@@ -153,22 +250,29 @@ export default function App() {
                 onBackgroundClick={clearSelection}
                 onChanged={handleGraphChanged}
                 canEdit={canEdit}
+                isOwner={isOwner}
+                taskManagementEnabled={effectiveTaskManagementEnabled}
                 onOpenCategories={() => setManageCategoriesOpen(true)}
                 onOpenRelationTypes={() => setManageRelationTypesOpen(true)}
                 onOpenTags={() => setManageTagsOpen(true)}
+                onOpenActivity={() => setActivityOpen(true)}
+                onOpenTaskStatuses={() => setManageTaskStatusesOpen(true)}
+                onOpenProgress={() => setProgressOpen(true)}
+                onViewTaskList={canToggleView ? () => setViewOverride('tasks') : undefined}
               />
-            ) : (
-              <div className="empty-state">Loading graph...</div>
             )}
           </div>
 
-          {graphQuery.data && selectedNodeId && (
+          {graphQuery.data && selectedNodeId && !showTaskListView && (
             <NodeDetailPanel
               graph={graphQuery.data}
               selectedNodeId={selectedNodeId}
               onClose={clearSelection}
               onChanged={handleGraphChanged}
               canEdit={canEdit}
+              isOwner={isOwner}
+              restrictedAccessEnabled={currentMap?.restrictedAccessEnabled ?? false}
+              taskManagementEnabled={effectiveTaskManagementEnabled}
             />
           )}
 
@@ -196,6 +300,23 @@ export default function App() {
               onChanged={handleGraphChanged}
             />
           )}
+          {isActivityOpen && (
+            <ActivityPanel mapId={currentMapId} onClose={() => setActivityOpen(false)} />
+          )}
+          {isManageTaskStatusesOpen && graphQuery.data && (
+            <ManageTaskStatusesModal
+              mapId={currentMapId}
+              graph={graphQuery.data}
+              onClose={() => setManageTaskStatusesOpen(false)}
+              onChanged={handleGraphChanged}
+            />
+          )}
+          {isProgressOpen && graphQuery.data && (
+            <ProgressPanel mapId={currentMapId} graph={graphQuery.data} onClose={() => setProgressOpen(false)} />
+          )}
+          {isMapSettingsOpen && currentMap && (
+            <MapSettingsModal map={currentMap} isOwner={isOwner} onClose={() => setMapSettingsOpen(false)} />
+          )}
         </>
       )}
 
@@ -205,6 +326,7 @@ export default function App() {
       {isAccountSettingsOpen && (
         <AccountSettingsModal onClose={() => setAccountSettingsOpen(false)} />
       )}
+      {isManageTeamsOpen && <ManageTeamsModal onClose={() => setManageTeamsOpen(false)} />}
     </div>
   );
 }

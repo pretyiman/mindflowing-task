@@ -23,3 +23,7 @@ export const verifyEmailSchema = z.object({
 export const googleSignInSchema = z.object({
   credential: z.string().min(1)
 });
+
+export const updateAppModeSchema = z.object({
+  appMode: z.enum(['TASK_MANAGER', 'MINDFLOW', 'BOTH'])
+});

@@ -11,7 +11,7 @@ export async function edgesRoutes(app: FastifyInstance) {
   app.get<{ Params: { mapId: string } }>(
     '/maps/:mapId/edges',
     { preHandler: [requireAuth, requireMapAccess('VIEWER')] },
-    async (request) => edgesService.listEdges(request.params.mapId)
+    async (request) => edgesService.listEdges(request.params.mapId, request.user!.id)
   );
 
   app.post<{ Params: { mapId: string } }>(
@@ -19,7 +19,7 @@ export async function edgesRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireMapAccess('EDITOR')] },
     async (request, reply) => {
       const body = createEdgeSchema.parse(request.body);
-      const edge = await edgesService.createEdge(request.params.mapId, body);
+      const edge = await edgesService.createEdge(request.params.mapId, body, request.user!.id);
       reply.status(201).send(edge);
     }
   );
@@ -29,7 +29,7 @@ export async function edgesRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupEdge, 'EDITOR')] },
     async (request) => {
       const body = updateEdgeSchema.parse(request.body);
-      return edgesService.updateEdge(request.params.id, body);
+      return edgesService.updateEdge(request.params.id, body, request.user!.id);
     }
   );
 
@@ -37,7 +37,7 @@ export async function edgesRoutes(app: FastifyInstance) {
     '/edges/:id',
     { preHandler: [requireAuth, requireVerifiedEmail, requireResourceMapAccess(lookupEdge, 'EDITOR')] },
     async (request, reply) => {
-      await edgesService.deleteEdge(request.params.id);
+      await edgesService.deleteEdge(request.params.id, request.user!.id);
       reply.status(204).send();
     }
   );
