@@ -5,6 +5,7 @@ import { graphQueryKey } from '../../hooks/useGraphData';
 
 interface Props {
   maps: MindMap[];
+  onOpenMap: (mapId: string) => void;
 }
 
 const TREND_DAYS = 14;
@@ -74,46 +75,60 @@ function Sparkline({ trend }: { trend: { date: string; count: number }[] }) {
   );
 }
 
-// Always-visible per-owned-project snapshot at the top of TaskManagerHome -
-// deliberately NOT gated behind a button/modal, so the "how are my projects
-// doing" answer is right there on every visit, not an extra click away.
-// Scoped to projects the user OWNS (mirrors the map-wide ActivityLog's
-// owner-only visibility) - shares the same graphQueryKey cache TaskManagerHome's
-// own task-list fetch already uses, so this doesn't duplicate network requests.
-export default function ProjectsDashboard({ maps }: Props) {
-  const ownedProjects = maps.filter((m) => m.workspaceType === 'TASKS' && m.myRole === 'OWNER');
+// The Task Manager home page's project list - every task-enabled map the
+// user owns or collaborates on, each a clickable card showing its total task
+// count (regardless of stage) so "how many tasks does this project have" is
+// visible without opening it. Owned projects additionally get the richer
+// done/overdue/trend snapshot (mirrors the map-wide ActivityLog's owner-only
+// visibility - a collaborator doesn't need burndown detail, just the count).
+// Shares the same graphQueryKey cache TaskListView's own fetch already uses
+// once you click in, so opening a project from here doesn't refetch.
+export default function ProjectsDashboard({ maps, onOpenMap }: Props) {
+  const projects = maps.filter((m) => m.taskManagementEnabled);
 
   const graphQueries = useQueries({
-    queries: ownedProjects.map((m) => ({ queryKey: graphQueryKey(m.id), queryFn: () => mapsApi.graph(m.id) }))
+    queries: projects.map((m) => ({ queryKey: graphQueryKey(m.id), queryFn: () => mapsApi.graph(m.id) }))
   });
 
-  if (ownedProjects.length === 0) return null;
+  if (projects.length === 0) return null;
 
   return (
     <div className="dashboard-cards">
-      {ownedProjects.map((project, i) => {
+      {projects.map((project, i) => {
         const graph = graphQueries[i].data;
-        if (!graph) return null;
-        const { total, done, percent, overdue, trend } = computeStats(graph.nodes, graph.taskStatuses);
+        const isOwnerProject = project.myRole === 'OWNER';
         return (
-          <div key={project.id} className="dashboard-card">
+          <button
+            key={project.id}
+            type="button"
+            className="dashboard-card"
+            onClick={() => onOpenMap(project.id)}
+          >
             <h3 className="dashboard-card-title">{project.name}</h3>
-            {total === 0 ? (
-              <p className="hint-text">No tasks yet.</p>
+            {!graph ? (
+              <p className="hint-text">Loading...</p>
             ) : (
-              <>
-                <div className="progress-summary">
-                  <div className="progress-bar-track">
-                    <div className="progress-bar-fill" style={{ width: `${percent}%` }} />
-                  </div>
-                  <p className="progress-summary-text">
-                    {done} of {total} done ({percent}%){overdue > 0 ? ` · ${overdue} overdue` : ''}
-                  </p>
-                </div>
-                <Sparkline trend={trend} />
-              </>
+              (() => {
+                const { total, done, percent, overdue, trend } = computeStats(graph.nodes, graph.taskStatuses);
+                if (total === 0) return <p className="hint-text">No tasks yet.</p>;
+                const taskCountText = `${total} task${total === 1 ? '' : 's'}`;
+                if (!isOwnerProject) return <p className="progress-summary-text">{taskCountText}</p>;
+                return (
+                  <>
+                    <div className="progress-summary">
+                      <div className="progress-bar-track">
+                        <div className="progress-bar-fill" style={{ width: `${percent}%` }} />
+                      </div>
+                      <p className="progress-summary-text">
+                        {taskCountText} · {done} done ({percent}%){overdue > 0 ? ` · ${overdue} overdue` : ''}
+                      </p>
+                    </div>
+                    <Sparkline trend={trend} />
+                  </>
+                );
+              })()
             )}
-          </div>
+          </button>
         );
       })}
     </div>

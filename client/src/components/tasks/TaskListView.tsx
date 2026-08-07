@@ -137,6 +137,25 @@ export default function TaskListView({
 
   const formatDueDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
+  // A selected task takes over this whole view as its own page (with its own
+  // Back button) rather than overlaying the list in a modal - see
+  // TaskEditPanel's own "task-detail-page" wrapper.
+  if (selectedTaskId) {
+    return (
+      <TaskEditPanel
+        nodeId={selectedTaskId}
+        graph={graph}
+        members={members}
+        canEdit={canEdit}
+        isOwner={isOwner}
+        restrictedAccessEnabled={restrictedAccessEnabled}
+        onClose={() => setSelectedTaskId(null)}
+        onChanged={onChanged}
+        onSelectTask={setSelectedTaskId}
+      />
+    );
+  }
+
   const renderTaskRow = (task: GraphNode) => {
     const assigneeNames = task.assigneeIds
       .map((id) => memberById.get(id))
@@ -254,20 +273,6 @@ export default function TaskListView({
             </table>
           </div>
         ))
-      )}
-
-      {selectedTaskId && (
-        <TaskEditPanel
-          nodeId={selectedTaskId}
-          graph={graph}
-          members={members}
-          canEdit={canEdit}
-          isOwner={isOwner}
-          restrictedAccessEnabled={restrictedAccessEnabled}
-          onClose={() => setSelectedTaskId(null)}
-          onChanged={onChanged}
-          onSelectTask={setSelectedTaskId}
-        />
       )}
     </div>
   );

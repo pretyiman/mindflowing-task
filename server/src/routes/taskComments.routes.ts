@@ -1,7 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { requireAuth, requireVerifiedEmail } from '../plugins/auth.js';
-import { requireNodeVisible, requireResourceMapAccess, requireResourceNodeVisible } from '../plugins/authorization.js';
+import {
+  requireNodeVisible,
+  requireResourceMapAccess,
+  requireResourceMapOwner,
+  requireResourceNodeVisible
+} from '../plugins/authorization.js';
 import { createCommentSchema } from '../schemas/taskComments.schema.js';
 import * as taskCommentsService from '../services/taskComments.service.js';
 import * as activityService from '../services/activity.service.js';
@@ -38,7 +43,12 @@ export async function taskCommentsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const body = createCommentSchema.parse(request.body);
-      const comment = await taskCommentsService.createComment(request.params.id, request.user!.id, body.body);
+      const comment = await taskCommentsService.createComment(
+        request.params.id,
+        request.user!.id,
+        body.body,
+        body.parentCommentId
+      );
       reply.status(201).send(comment);
     }
   );
@@ -59,9 +69,12 @@ export async function taskCommentsRoutes(app: FastifyInstance) {
     }
   );
 
+  // Owner-only, unlike comments above - this is the system/audit trail (node
+  // created, status changed, etc), not part of the discussion every
+  // collaborator sees. Mirrors the map-wide ActivityLog's owner-only stance.
   app.get<{ Params: { id: string }; Querystring: { cursor?: string } }>(
     '/nodes/:id/activity',
-    { preHandler: [requireAuth, requireResourceMapAccess(lookupNode, 'VIEWER'), requireNodeVisible()] },
+    { preHandler: [requireAuth, requireResourceMapOwner(lookupNode)] },
     async (request) => activityService.listNodeActivity(request.params.id, request.query.cursor)
   );
 }

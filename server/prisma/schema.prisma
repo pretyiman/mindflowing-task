@@ -404,13 +404,22 @@ model TaskComment {
   nodeId    String   @map("node_id")
   authorId  String?  @map("author_id")
   body      String
+  // Single level of nesting only, GitHub/Jira-style: a reply always points at
+  // a true top-level comment, never at another reply - taskComments.service.ts's
+  // createComment re-parents a "reply to a reply" onto its own parent so the
+  // client only ever renders two tiers. Cascades so deleting a top-level
+  // comment takes its replies with it rather than orphaning them.
+  parentCommentId String? @map("parent_comment_id")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
   author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent    TaskComment?  @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies   TaskComment[] @relation("CommentReplies")
 
   @@index([nodeId, createdAt])
+  @@index([parentCommentId])
   @@map("task_comments")
 }
 

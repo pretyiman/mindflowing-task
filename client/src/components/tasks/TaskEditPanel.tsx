@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import Modal from '../common/Modal';
 import type { GraphData, MapMember, TaskPriority } from '../../types/graph';
 import { nodesApi } from '../../api/nodes.api';
 import { nodeAccessApi, type NodeAccess } from '../../api/nodeAccess.api';
@@ -236,7 +235,14 @@ export default function TaskEditPanel({
   };
 
   return (
-    <Modal title="Task" onClose={onClose}>
+    <div className="task-detail-page">
+      <div className="task-detail-header">
+        <button className="action-btn" onClick={onClose}>
+          ← Back to Tasks
+        </button>
+        <h2 className="task-detail-title">{node.name || 'Task'}</h2>
+      </div>
+
       <div className="property">
         <label>Name</label>
         <input
@@ -535,6 +541,6 @@ export default function TaskEditPanel({
           </button>
         </div>
       )}
-    </Modal>
+    </div>
   );
 }

@@ -21,8 +21,9 @@ export interface ActivityPage {
 export const activityApi = {
   list: (mapId: string, cursor?: string) =>
     api.get<ActivityPage>(`/maps/${mapId}/activity${cursor ? `?cursor=${cursor}` : ''}`),
-  // Owner-only map-wide log above; this is the per-node equivalent anyone who
-  // can see the node may read (see taskComments.routes.ts's /nodes/:id/activity).
+  // Also owner-only (see taskComments.routes.ts's /nodes/:id/activity) - the
+  // per-node system/audit trail, distinct from that task's own comments,
+  // which every collaborator who can see the task may read.
   listForNode: (nodeId: string, cursor?: string) =>
     api.get<ActivityPage>(`/nodes/${nodeId}/activity${cursor ? `?cursor=${cursor}` : ''}`)
 };

@@ -12,24 +12,47 @@ export async function listComments(nodeId: string) {
   });
 }
 
-export async function createComment(nodeId: string, authorId: string, body: string) {
+export async function createComment(
+  nodeId: string,
+  authorId: string,
+  body: string,
+  parentCommentId?: string | null
+) {
   const node = await prisma.node.findUnique({
     where: { id: nodeId },
     select: { id: true, mapId: true, name: true, assignees: { select: { userId: true } } }
   });
   if (!node) throw new NotFoundError('Node');
 
+  // Single level of nesting only - a reply to a reply re-parents onto that
+  // reply's own top-level comment, so the client only ever renders two tiers
+  // (see schema.prisma's TaskComment comment).
+  let resolvedParentId: string | null = null;
+  let parentAuthorId: string | null = null;
+  if (parentCommentId) {
+    const parent = await prisma.taskComment.findUnique({
+      where: { id: parentCommentId },
+      select: { nodeId: true, parentCommentId: true, authorId: true }
+    });
+    if (!parent || parent.nodeId !== nodeId) throw new NotFoundError('Comment');
+    resolvedParentId = parent.parentCommentId ?? parentCommentId;
+    parentAuthorId = parent.authorId;
+  }
+
   const comment = await prisma.taskComment.create({
-    data: { nodeId, authorId, body },
+    data: { nodeId, authorId, body, parentCommentId: resolvedParentId },
     include: { author: { select: authorSelect } }
   });
 
-  // Notify every assignee when someone else comments on their task - never
-  // for commenting on your own assigned task.
-  for (const { userId } of node.assignees) {
-    if (userId !== authorId) {
-      void notify(userId, node.mapId, node.id, 'COMMENT', `New comment on "${node.name}"`);
-    }
+  // Notify every assignee, plus the comment/reply this is replying to (if
+  // any), when someone else comments - never for commenting on/replying to
+  // yourself. A Set dedupes the (common) case of the parent author also
+  // being an assignee, so they don't get double-notified.
+  const notifyIds = new Set(node.assignees.map((a) => a.userId));
+  if (parentAuthorId) notifyIds.add(parentAuthorId);
+  notifyIds.delete(authorId);
+  for (const userId of notifyIds) {
+    void notify(userId, node.mapId, node.id, 'COMMENT', `New comment on "${node.name}"`);
   }
 
   return comment;

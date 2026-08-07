@@ -189,10 +189,6 @@ export default function App() {
           <TaskManagerHome
             maps={mapsQuery.data ?? []}
             onOpenMap={setCurrentMapId}
-            onOpenTask={(mapId, nodeId) => {
-              setCurrentMapId(mapId);
-              selectNode(nodeId);
-            }}
             onCreateMap={handleCreateMap}
             onOpenTeams={() => setManageTeamsOpen(true)}
           />
