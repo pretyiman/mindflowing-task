@@ -1,25 +1,23 @@
-import { useEffect, useState } from 'react';
-import type { GraphData, MapMember, TaskPriority } from '../../types/graph';
+import { useEffect, useState, type DragEvent } from 'react';
+import type { GraphData, MapMember, RecurrenceRule, TaskPriority } from '../../types/graph';
+import { useAuthStore } from '../../state/authStore';
 import { nodesApi } from '../../api/nodes.api';
 import { nodeAccessApi, type NodeAccess } from '../../api/nodeAccess.api';
 import { collaboratorsApi, type Collaborator, type PendingInvite } from '../../api/collaborators.api';
 import { taskAttachmentsApi, type TaskAttachment } from '../../api/taskAttachments.api';
+import { taskCommentsApi } from '../../api/taskComments.api';
+import { checklistApi, type ChecklistItem } from '../../api/checklist.api';
 import { ApiError } from '../../api/client';
+import { SUBTASK_RELATION_NAME } from '../../constants/taskRelations';
+import { PRIORITY_COLOR, PRIORITY_LABEL, RECURRENCE_LABEL, statusPillStyle } from '../../constants/taskVisuals';
 import TaskDiscussion from './TaskDiscussion';
 
 const TASK_PRIORITIES: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
-const PRIORITY_LABEL: Record<TaskPriority, string> = {
-  LOW: 'Low',
-  MEDIUM: 'Medium',
-  HIGH: 'High',
-  URGENT: 'Urgent'
-};
+const RECURRENCE_RULES: RecurrenceRule[] = ['DAILY', 'WEEKLY', 'MONTHLY', 'WEEKDAYS'];
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
-
-const SUBTASK_RELATION_NAME = 'Sub-task of';
 
 interface Props {
   nodeId: string;
@@ -46,6 +44,7 @@ export default function TaskEditPanel({
   onChanged,
   onSelectTask
 }: Props) {
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const node = graph.nodes.find((n) => n.id === nodeId) ?? null;
 
   const [name, setName] = useState(node?.name ?? '');
@@ -60,10 +59,23 @@ export default function TaskEditPanel({
   const [newAttachmentName, setNewAttachmentName] = useState('');
   const [newAttachmentUrl, setNewAttachmentUrl] = useState('');
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [showAddChecklistItem, setShowAddChecklistItem] = useState(false);
+  const [newChecklistText, setNewChecklistText] = useState('');
+  const [draggedChecklistId, setDraggedChecklistId] = useState<string | null>(null);
 
   useEffect(() => {
     setName(node?.name ?? '');
     setNotes(node?.notes ?? '');
+  }, [node?.id]);
+
+  // Best-effort "opened this task" beacon for the owner-only History tab -
+  // see activity.service.ts's recordNodeView for the dedupe rule. Fire and
+  // forget: a failed/blocked beacon must never affect the task view itself.
+  useEffect(() => {
+    if (!node) return;
+    taskCommentsApi.recordView(node.id).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node?.id]);
 
   const refreshAttachments = () => {
@@ -78,6 +90,27 @@ export default function TaskEditPanel({
     taskAttachmentsApi.list(node.id).then(setAttachments);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node?.id]);
+
+  // Narrower than everything else on this panel - a checklist is a working
+  // doc between the owner and whoever's CURRENTLY assigned, not "anyone who
+  // can see this task" (matches the server's requireNodeOwnerOrAssignee -
+  // see schema.prisma's ChecklistItem comment). Computed client-side purely
+  // to decide whether to fetch/render the section at all; the server is the
+  // real enforcement either way.
+  const canSeeChecklist = !!node && (isOwner || (currentUserId != null && node.assigneeIds.includes(currentUserId)));
+
+  const refreshChecklist = () => {
+    if (node) checklistApi.list(node.id).then(setChecklist);
+  };
+
+  useEffect(() => {
+    if (!canSeeChecklist) {
+      setChecklist([]);
+      return;
+    }
+    refreshChecklist();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node?.id, canSeeChecklist]);
 
   const showAccessSection = isOwner && restrictedAccessEnabled;
 
@@ -126,6 +159,9 @@ export default function TaskEditPanel({
     : undefined;
   const parentTask = parentEdge ? graph.nodes.find((n) => n.id === parentEdge.targetNodeId) : undefined;
 
+  const currentStatus = statusById.get(node.taskStatusId ?? '');
+  const priorityAccentColor = node.priority ? PRIORITY_COLOR[node.priority] : 'var(--border)';
+
   const handleAddSubtask = async () => {
     if (!newSubtaskName.trim()) return;
     try {
@@ -162,6 +198,62 @@ export default function TaskEditPanel({
     }
   };
 
+  const handleAddChecklistItem = async () => {
+    if (!newChecklistText.trim()) return;
+    try {
+      await checklistApi.create(node.id, newChecklistText.trim());
+      setNewChecklistText('');
+      setError(null);
+      refreshChecklist();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to add checklist item');
+    }
+  };
+
+  const handleToggleChecklistItem = async (item: ChecklistItem) => {
+    // Optimistic - a checkbox that visibly lags behind the click reads as
+    // broken, and this is a low-stakes toggle to roll back on failure.
+    setChecklist((prev) => prev.map((c) => (c.id === item.id ? { ...c, done: !c.done } : c)));
+    try {
+      await checklistApi.update(item.id, { done: !item.done });
+    } catch (err) {
+      setChecklist((prev) => prev.map((c) => (c.id === item.id ? { ...c, done: item.done } : c)));
+      setError(err instanceof ApiError ? err.message : 'Failed to update checklist item');
+    }
+  };
+
+  const handleDeleteChecklistItem = async (id: string) => {
+    try {
+      await checklistApi.remove(id);
+      refreshChecklist();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to remove checklist item');
+    }
+  };
+
+  const handleChecklistDrop = async (targetId: string) => {
+    const draggedId = draggedChecklistId;
+    setDraggedChecklistId(null);
+    if (!draggedId || draggedId === targetId) return;
+    const currentOrder = checklist.map((c) => c.id);
+    const fromIndex = currentOrder.indexOf(draggedId);
+    const toIndex = currentOrder.indexOf(targetId);
+    if (fromIndex === -1 || toIndex === -1) return;
+    const reordered = [...currentOrder];
+    reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, draggedId);
+    // Optimistic reorder, keyed off the ids so the checkbox states move with
+    // their own item rather than getting left behind at the old position.
+    const itemById = new Map(checklist.map((c) => [c.id, c]));
+    setChecklist(reordered.map((id) => itemById.get(id)!));
+    try {
+      await checklistApi.reorder(node.id, reordered);
+    } catch (err) {
+      refreshChecklist();
+      setError(err instanceof ApiError ? err.message : 'Failed to reorder checklist');
+    }
+  };
+
   const handleSaveName = async () => {
     if (!name.trim() || name === node.name) return;
     try {
@@ -183,7 +275,13 @@ export default function TaskEditPanel({
   };
 
   const handleFieldChange = async (
-    patch: Partial<{ taskStatusId: string | null; assigneeIds: string[]; priority: TaskPriority | null; dueDate: string | null }>
+    patch: Partial<{
+      taskStatusId: string | null;
+      assigneeIds: string[];
+      priority: TaskPriority | null;
+      dueDate: string | null;
+      recurrenceRule: RecurrenceRule | null;
+    }>
   ) => {
     try {
       await nodesApi.update(node.id, patch);
@@ -235,7 +333,7 @@ export default function TaskEditPanel({
   };
 
   return (
-    <div className="task-detail-page">
+    <div className="task-detail-page" style={{ borderTop: `4px solid ${priorityAccentColor}` }}>
       <div className="task-detail-header">
         <button className="action-btn" onClick={onClose}>
           ← Back to Tasks
@@ -274,6 +372,8 @@ export default function TaskEditPanel({
           <div>
             <span className="task-field-label">Status</span>
             <select
+              className="status-pill"
+              style={statusPillStyle(currentStatus?.color ?? '#8899aa')}
               value={node.taskStatusId ?? ''}
               onChange={(e) => handleFieldChange({ taskStatusId: e.target.value || null })}
               disabled={!canEdit}
@@ -289,6 +389,8 @@ export default function TaskEditPanel({
           <div>
             <span className="task-field-label">Priority</span>
             <select
+              className="status-pill"
+              style={statusPillStyle(node.priority ? PRIORITY_COLOR[node.priority] : '#8899aa')}
               value={node.priority ?? ''}
               onChange={(e) => handleFieldChange({ priority: (e.target.value as TaskPriority) || null })}
               disabled={!canEdit || !isOwner}
@@ -312,6 +414,7 @@ export default function TaskEditPanel({
               <div className="tag-chip-list">
                 {members.map((m) => {
                   const active = node.assigneeIds.includes(m.id);
+                  const isMe = m.id === currentUserId;
                   return (
                     <button
                       key={m.id}
@@ -319,9 +422,11 @@ export default function TaskEditPanel({
                       className={`tag-chip${active ? ' tag-chip-active' : ''}`}
                       onClick={() => handleToggleAssignee(m.id)}
                       disabled={!canEdit || !isOwner}
-                      title={!isOwner ? 'Only the map owner can assign or reassign tasks' : undefined}
+                      title={!isOwner ? 'Only the map owner can assign or reassign tasks' : isMe ? 'Assign this task to yourself' : undefined}
                     >
+                      {isMe ? '🙋 ' : ''}
                       {m.name ?? m.email}
+                      {isMe ? ' (you)' : ''}
                     </button>
                   );
                 })}
@@ -345,7 +450,8 @@ export default function TaskEditPanel({
             )}
             {isOwner && members.length <= 1 && pendingInvites.length === 0 && (
               <span className="hint-text" style={{ display: 'block', marginTop: 4, marginBottom: 0 }}>
-                You're the only one on this project - Share it to invite people you can assign tasks to.
+                You're the only one on this project so far - click "🙋 You (you)" above to assign it to
+                yourself, or Share the project to invite others.
               </span>
             )}
           </div>
@@ -361,6 +467,28 @@ export default function TaskEditPanel({
               title={!isOwner ? 'Only the map owner can set the due date' : undefined}
             />
           </div>
+          <div>
+            <span className="task-field-label">Repeats</span>
+            <select
+              value={node.recurrenceRule ?? ''}
+              onChange={(e) => handleFieldChange({ recurrenceRule: (e.target.value as RecurrenceRule) || null })}
+              disabled={!canEdit || !isOwner || !node.dueDate}
+              title={
+                !isOwner
+                  ? 'Only the map owner can set repeating'
+                  : !node.dueDate
+                    ? 'Set a due date first - recurrence needs one to compute the next occurrence from'
+                    : undefined
+              }
+            >
+              <option value="">Does not repeat</option>
+              {RECURRENCE_RULES.map((r) => (
+                <option key={r} value={r}>
+                  {RECURRENCE_LABEL[r]}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {(node.startedAt || node.completedAt) && (
@@ -370,19 +498,81 @@ export default function TaskEditPanel({
             {node.completedAt && <>Completed {formatDate(node.completedAt)}</>}
           </p>
         )}
-
-        <span className="task-field-label" style={{ marginTop: 12, display: 'block' }}>
-          Notes / Instructions
-        </span>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          onBlur={handleSaveNotes}
-          placeholder="Add instructions, context, or specs for whoever is assigned..."
-          rows={4}
-          disabled={!canEdit}
-        />
       </div>
+
+      <div className="task-detail-columns">
+        <div className="property">
+          <label>Notes / Instructions</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            onBlur={handleSaveNotes}
+            placeholder="Add instructions, context, or specs for whoever is assigned..."
+            rows={10}
+            disabled={!canEdit || !isOwner}
+            title={!isOwner ? "Only the map owner can edit a task's instructions - reply in Discussion instead" : undefined}
+          />
+        </div>
+
+        <div className="task-detail-column-right">
+      {canSeeChecklist && (
+        <div className="property">
+          <label>
+            Checklist{checklist.length > 0 ? ` (${checklist.filter((c) => c.done).length}/${checklist.length} done)` : ''}
+          </label>
+          {checklist.length === 0 ? (
+            <p className="hint-text">No checklist items yet.</p>
+          ) : (
+            <ul className="checklist-list">
+              {checklist.map((item) => (
+                <li
+                  key={item.id}
+                  className={`checklist-item${draggedChecklistId === item.id ? ' checklist-item-dragging' : ''}`}
+                  draggable={canSeeChecklist}
+                  onDragStart={() => setDraggedChecklistId(item.id)}
+                  onDragEnd={() => setDraggedChecklistId(null)}
+                  onDragOver={(e: DragEvent<HTMLLIElement>) => canSeeChecklist && e.preventDefault()}
+                  onDrop={() => canSeeChecklist && handleChecklistDrop(item.id)}
+                >
+                  <span className="checklist-drag-handle" title="Drag to reorder">⠿</span>
+                  <label className="checklist-item-label">
+                    <input type="checkbox" checked={item.done} onChange={() => handleToggleChecklistItem(item)} />
+                    <span className={item.done ? 'checklist-item-text-done' : undefined}>{item.text}</span>
+                  </label>
+                  <button
+                    className="icon-btn"
+                    onClick={() => handleDeleteChecklistItem(item.id)}
+                    title="Remove checklist item"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {showAddChecklistItem && (
+            <div className="add-form">
+              <input
+                autoFocus
+                placeholder="Checklist item (e.g. API integration)"
+                value={newChecklistText}
+                onChange={(e) => setNewChecklistText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAddChecklistItem()}
+              />
+              <button className="action-btn" onClick={handleAddChecklistItem}>
+                Add
+              </button>
+            </div>
+          )}
+          <button
+            className="action-btn"
+            style={{ marginTop: checklist.length === 0 ? 8 : 0 }}
+            onClick={() => setShowAddChecklistItem((v) => !v)}
+          >
+            + Add checklist item
+          </button>
+        </div>
+      )}
 
       <div className="property">
         <label>
@@ -487,6 +677,8 @@ export default function TaskEditPanel({
             </button>
           </>
         )}
+      </div>
+        </div>
       </div>
 
       <TaskDiscussion nodeId={node.id} isOwner={isOwner} />

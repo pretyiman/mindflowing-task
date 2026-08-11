@@ -15,13 +15,13 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GraphData, HandleId, MapMember } from '../../types/graph';
-import { edgesApi } from '../../api/edges.api';
+import type { GraphData, GraphNode, HandleId } from '../../types/graph';
+import { edgesApi, type AutoAssignOutcome } from '../../api/edges.api';
 import { nodesApi } from '../../api/nodes.api';
 import { groupsApi } from '../../api/groups.api';
-import { mapsApi } from '../../api/maps.api';
 import { ApiError } from '../../api/client';
 import { useGraphStore } from '../../state/graphStore';
+import { useMapMembers } from '../../hooks/useMapMembers';
 import CustomEdge from './CustomEdge';
 import CustomNode from './CustomNode';
 import GroupNode from './GroupNode';
@@ -105,18 +105,16 @@ export default function GraphCanvas({
 }: Props) {
   const [nodes, setNodes] = useState<RFNode[]>([]);
   const [edges, setEdges] = useState<RFEdge[]>([]);
-  const [members, setMembers] = useState<MapMember[]>([]);
-
-  useEffect(() => {
-    if (!taskManagementEnabled) {
-      setMembers([]);
-      return;
-    }
-    mapsApi.members(mapId).then(setMembers);
-  }, [mapId, taskManagementEnabled]);
+  const members = useMapMembers(mapId, taskManagementEnabled);
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
   const [pendingRelationTypeId, setPendingRelationTypeId] = useState('');
   const [connectError, setConnectError] = useState<string | null>(null);
+  // Result of the auto-assign-from-edge check (see edges.service.ts) for the
+  // connection just created - shown in place of the form so a task<->person
+  // link that silently couldn't auto-assign (no email, no matching
+  // collaborator) is never a silent no-op. null for an ordinary edge with
+  // nothing to report, which just closes the dialog immediately as before.
+  const [autoAssignResult, setAutoAssignResult] = useState<AutoAssignOutcome | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<RFEdge | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [editColor, setEditColor] = useState('#cccccc');
@@ -198,7 +196,8 @@ export default function GraphCanvas({
     connectedToNodeId,
     selectedAssigneeId,
     selectedTaskStatusId,
-    selectedPriority
+    selectedPriority,
+    selectedDueFilter
   } = useGraphStore();
   const filterState = {
     searchQuery,
@@ -207,10 +206,37 @@ export default function GraphCanvas({
     connectedToNodeId,
     selectedAssigneeId,
     selectedTaskStatusId,
-    selectedPriority
+    selectedPriority,
+    selectedDueFilter
   };
   const filterActive = isFilterActive(filterState);
   const matchedIds = useMemo(() => filterGraph(data, filterState), [data, JSON.stringify(filterState)]);
+
+  // Edge-based task linking: for every non-task node, collect the task nodes
+  // it's directly connected to by any edge (either direction, any relation
+  // type - the connection itself IS the link, nothing more to configure).
+  // See NodeInteractionContext.ts's own comment for why this needs no
+  // schema change.
+  const linkedTasksByNodeId = useMemo(() => {
+    const nodeById = new Map(data.nodes.map((n) => [n.id, n]));
+    const map = new Map<string, GraphNode[]>();
+    for (const edge of data.edges) {
+      const source = nodeById.get(edge.sourceNodeId);
+      const target = nodeById.get(edge.targetNodeId);
+      if (!source || !target) continue;
+      if (source.isTask && !target.isTask) {
+        const list = map.get(target.id) ?? [];
+        list.push(source);
+        map.set(target.id, list);
+      }
+      if (target.isTask && !source.isTask) {
+        const list = map.get(source.id) ?? [];
+        list.push(target);
+        map.set(source.id, list);
+      }
+    }
+    return map;
+  }, [data]);
 
   // Data is the source of truth (server state); local nodes/edges state exists only so
   // React Flow can give smooth interactive dragging. Reset whenever upstream data changes.
@@ -272,19 +298,47 @@ export default function GraphCanvas({
   const confirmConnection = async () => {
     if (!pendingConnection || !pendingRelationTypeId) return;
     try {
-      await edgesApi.create(mapId, {
+      const created = await edgesApi.create(mapId, {
         sourceNodeId: pendingConnection.source,
         targetNodeId: pendingConnection.target,
         relationTypeId: pendingRelationTypeId,
         sourceHandle: pendingConnection.sourceHandle,
         targetHandle: pendingConnection.targetHandle
       });
-      setPendingConnection(null);
       onChanged();
+      // An ordinary edge (nothing to auto-assign) closes immediately, same
+      // as before; a task<->person connection instead shows what happened -
+      // including when it silently couldn't - until the owner dismisses it.
+      if (created.autoAssign.status === 'not-applicable') {
+        setPendingConnection(null);
+      } else {
+        setAutoAssignResult(created.autoAssign);
+      }
     } catch (err) {
       setConnectError(err instanceof ApiError ? err.message : 'Failed to create connection');
     }
   };
+
+  const closeConnectionDialog = () => {
+    setPendingConnection(null);
+    setAutoAssignResult(null);
+    setConnectError(null);
+  };
+
+  function describeAutoAssign(outcome: AutoAssignOutcome): string {
+    switch (outcome.status) {
+      case 'assigned':
+        return `✓ Auto-assigned to ${outcome.personName} (${outcome.personEmail}) - they've been notified and can now access this task.`;
+      case 'already-assigned':
+        return `${outcome.personName} was already assigned to this task - nothing to add.`;
+      case 'no-email':
+        return `"${outcome.personName}" has no email set, so nothing was auto-assigned. Add an "email" property to that node, or assign manually from the task.`;
+      case 'no-match':
+        return `No project member found with email "${outcome.email}" (from "${outcome.personName}"). Invite them to the project first, or assign manually from the task.`;
+      case 'not-applicable':
+        return '';
+    }
+  }
 
   const handleEdgeClick = (edge: RFEdge) => {
     const raw = data.edges.find((e) => e.id === edge.id);
@@ -426,7 +480,8 @@ export default function GraphCanvas({
           isOwner,
           taskManagementEnabled,
           taskStatuses: data.taskStatuses,
-          members
+          members,
+          linkedTasksByNodeId
         }}
       >
         <div className="graph-panel">
@@ -560,16 +615,25 @@ export default function GraphCanvas({
           )}
 
           {pendingConnection && (
-            <div className="modal-overlay" onClick={() => setPendingConnection(null)}>
+            <div className="modal-overlay" onClick={closeConnectionDialog}>
               <div className="modal" style={{ width: 360 }} onClick={(e) => e.stopPropagation()}>
                 <div className="modal-header">
                   <h2>Connect nodes</h2>
-                  <button className="icon-btn" onClick={() => setPendingConnection(null)}>
+                  <button className="icon-btn" onClick={closeConnectionDialog}>
                     ✕
                   </button>
                 </div>
                 <div className="modal-body">
-                  {data.relationTypes.length === 0 ? (
+                  {autoAssignResult ? (
+                    <>
+                      <p className={autoAssignResult.status === 'assigned' ? 'success-text' : 'hint-text'}>
+                        {describeAutoAssign(autoAssignResult)}
+                      </p>
+                      <button className="action-btn" onClick={closeConnectionDialog}>
+                        Done
+                      </button>
+                    </>
+                  ) : data.relationTypes.length === 0 ? (
                     <p className="hint-text">
                       Create a relation type first (Relation Types in the toolbar), then draw the
                       connection again.

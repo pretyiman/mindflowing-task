@@ -94,3 +94,57 @@ export async function sendTaskAssignmentEmail(to: string, taskName: string, mapN
     console.log('[email] Ethereal test mode - preview:', nodemailer.getTestMessageUrl(info));
   }
 }
+
+export async function sendDueSoonEmail(to: string, taskName: string, mapName: string, dueDate: Date) {
+  const transporter = await getTransporter();
+  const safeTaskName = escapeHtml(taskName);
+  const safeMapName = escapeHtml(mapName);
+  const dueDateText = dueDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const info = await transporter.sendMail({
+    from: env.SMTP_FROM,
+    to,
+    subject: `Due soon: "${taskName}" in ${mapName}`,
+    text: `A task assigned to you is due soon, in the Mindflow map "${mapName}":\n\n${taskName}\nDue ${dueDateText}\n\n${env.APP_URL}`,
+    html: `
+      <p>A task assigned to you is due soon, in the Mindflow map <strong>${safeMapName}</strong>:</p>
+      <p style="font-size: 1.1em"><strong>${safeTaskName}</strong></p>
+      <p>Due ${dueDateText}</p>
+      <p><a href="${env.APP_URL}">${env.APP_URL}</a></p>
+    `
+  });
+
+  if (usingEthereal) {
+    console.log('[email] Ethereal test mode - preview:', nodemailer.getTestMessageUrl(info));
+  }
+}
+
+export async function sendReminderEmail(to: string, title: string, note: string | null, remindAt: Date) {
+  const transporter = await getTransporter();
+  const safeTitle = escapeHtml(title);
+  const safeNote = note ? escapeHtml(note) : null;
+  const whenText = remindAt.toLocaleString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+
+  const info = await transporter.sendMail({
+    from: env.SMTP_FROM,
+    to,
+    subject: `Reminder: ${title}`,
+    text: `${title}\n${whenText}${note ? `\n\n${note}` : ''}\n\n${env.APP_URL}`,
+    html: `
+      <p style="font-size: 1.1em"><strong>${safeTitle}</strong></p>
+      <p>${whenText}</p>
+      ${safeNote ? `<p>${safeNote}</p>` : ''}
+      <p><a href="${env.APP_URL}">${env.APP_URL}</a></p>
+    `
+  });
+
+  if (usingEthereal) {
+    console.log('[email] Ethereal test mode - preview:', nodemailer.getTestMessageUrl(info));
+  }
+}

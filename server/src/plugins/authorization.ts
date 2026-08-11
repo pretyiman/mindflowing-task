@@ -104,3 +104,43 @@ export function requireResourceNodeVisible(
     if (!visible) throw new NotFoundError('Resource');
   };
 }
+
+async function checkOwnerOrAssignee(userId: string, nodeId: string, mapId: string): Promise<void> {
+  const map = await getMapOwner(mapId);
+  if (map.ownerId === userId) return;
+  const assignee = await prisma.nodeAssignee.findUnique({ where: { nodeId_userId: { nodeId, userId } } });
+  if (!assignee) throw new NotFoundError('Node');
+}
+
+/**
+ * Narrower than requireNodeVisible - a Checklist is a working doc between
+ * the map owner and whoever's CURRENTLY assigned to this specific task, not
+ * "anyone who can see the node" (comments) or "any editor" (sub-tasks,
+ * attachments). Role doesn't matter here, only "are you assigned" - even a
+ * VIEWER-role collaborator gets full checklist read/write once they're an
+ * assignee, since assignment itself is what grants access for this one
+ * feature. 404s like every other gate in this file, so a non-owner/
+ * non-assignee collaborator can't tell a checklist even exists.
+ */
+export function requireNodeOwnerOrAssignee() {
+  return async (request: FastifyRequest<{ Params: { id: string } }>) => {
+    const node = await prisma.node.findUnique({ where: { id: request.params.id }, select: { mapId: true } });
+    if (!node) throw new NotFoundError('Node');
+    await checkOwnerOrAssignee(request.user!.id, request.params.id, node.mapId);
+  };
+}
+
+/**
+ * Same owner-or-assignee gate as requireNodeOwnerOrAssignee, but for routes
+ * keyed by a resource id that BELONGS to a node (e.g. /checklist/:id) - the
+ * lookup resolves that resource's own nodeId/mapId first.
+ */
+export function requireResourceNodeOwnerOrAssignee(
+  lookup: (id: string) => Promise<{ nodeId: string; mapId: string } | null>
+) {
+  return async (request: FastifyRequest<{ Params: { id: string } }>) => {
+    const resource = await lookup(request.params.id);
+    if (!resource) throw new NotFoundError('Resource');
+    await checkOwnerOrAssignee(request.user!.id, resource.nodeId, resource.mapId);
+  };
+}

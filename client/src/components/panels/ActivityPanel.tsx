@@ -23,7 +23,11 @@ function timeAgo(iso: string): string {
 const ACTION_ICON: Record<ActivityLogEntry['action'], string> = {
   create: '➕',
   update: '✏️',
-  delete: '🗑'
+  delete: '🗑',
+  // Never actually rendered here - listActivity excludes 'view' entries from
+  // this map-wide feed (see activity.service.ts) - present only so this map
+  // stays exhaustive over ActivityLogEntry['action'].
+  view: '👁️'
 };
 
 export default function ActivityPanel({ mapId, onClose }: Props) {

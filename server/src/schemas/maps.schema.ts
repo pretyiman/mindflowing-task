@@ -15,5 +15,8 @@ export const updateMapSchema = createMapSchema
   .extend({
     // Owner-only - enforced in maps.service.ts's updateMap, not just here.
     restrictedAccessEnabled: z.boolean().optional(),
-    taskManagementEnabled: z.boolean().optional()
+    taskManagementEnabled: z.boolean().optional(),
+    // Optional project target date - null explicitly clears it, undefined
+    // leaves it untouched (same convention as the rest of this schema).
+    targetDate: z.string().datetime().nullable().optional()
   });

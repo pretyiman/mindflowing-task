@@ -4,7 +4,9 @@ export interface ActivityLogEntry {
   id: string;
   mapId: string;
   userId: string | null;
-  action: 'create' | 'update' | 'delete';
+  // 'view' only ever appears from listForNode (per-task History) - listActivity
+  // (the map-wide feed) excludes it server-side, see activity.service.ts.
+  action: 'create' | 'update' | 'delete' | 'view';
   targetType: 'node' | 'edge' | 'group' | 'category' | 'relationType' | 'tag' | 'taskStatus';
   targetId: string | null;
   summary: string;

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { TaskPriority } from '../types/graph';
+import type { DueFilterValue } from '../components/graph/filterGraph';
 
 interface FilterState {
   searchQuery: string;
@@ -9,6 +10,7 @@ interface FilterState {
   selectedAssigneeId: string | null;
   selectedTaskStatusId: string | null;
   selectedPriority: TaskPriority | null;
+  selectedDueFilter: DueFilterValue | null;
 }
 
 const emptyFilterState: FilterState = {
@@ -18,7 +20,8 @@ const emptyFilterState: FilterState = {
   connectedToNodeId: null,
   selectedAssigneeId: null,
   selectedTaskStatusId: null,
-  selectedPriority: null
+  selectedPriority: null,
+  selectedDueFilter: null
 };
 
 interface GraphUiState extends FilterState {
@@ -67,6 +70,7 @@ interface GraphUiState extends FilterState {
   setSelectedAssigneeId: (userId: string | null) => void;
   setSelectedTaskStatusId: (statusId: string | null) => void;
   setSelectedPriority: (priority: TaskPriority | null) => void;
+  setSelectedDueFilter: (due: DueFilterValue | null) => void;
   clearFilters: () => void;
 }
 
@@ -122,5 +126,6 @@ export const useGraphStore = create<GraphUiState>((set) => ({
   setSelectedAssigneeId: (userId) => set({ selectedAssigneeId: userId }),
   setSelectedTaskStatusId: (statusId) => set({ selectedTaskStatusId: statusId }),
   setSelectedPriority: (priority) => set({ selectedPriority: priority }),
+  setSelectedDueFilter: (due) => set({ selectedDueFilter: due }),
   clearFilters: () => set(emptyFilterState)
 }));

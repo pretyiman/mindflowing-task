@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const TASK_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
+export const RECURRENCE_RULES = ['DAILY', 'WEEKLY', 'MONTHLY', 'WEEKDAYS'] as const;
 
 export const createNodeSchema = z.object({
   categoryId: z.string().uuid().nullable().optional(),
@@ -21,7 +22,11 @@ export const createNodeSchema = z.object({
   taskStatusId: z.string().uuid().nullable().optional(),
   assigneeIds: z.array(z.string().uuid()).optional(),
   priority: z.enum(TASK_PRIORITIES).nullable().optional(),
-  dueDate: z.string().datetime().nullable().optional()
+  dueDate: z.string().datetime().nullable().optional(),
+  // Opt-in "fluid" recurrence - meaningless without a dueDate, see
+  // schema.prisma's Node.recurrenceRule comment. Owner-gated same as
+  // dueDate/priority (see nodes.service.ts's assertActorIsMapOwner).
+  recurrenceRule: z.enum(RECURRENCE_RULES).nullable().optional()
 });
 
 export const updateNodeSchema = createNodeSchema.partial();

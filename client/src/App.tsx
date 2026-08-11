@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { mapsApi } from './api/maps.api';
+import { inboxApi } from './api/inbox.api';
 import type { WorkspaceType } from './types/graph';
-import { useGraphData } from './hooks/useGraphData';
+import { useGraphData, graphQueryKey } from './hooks/useGraphData';
 import { useGraphStore } from './state/graphStore';
 import { useAuthStore } from './state/authStore';
 import { useThemeStore } from './state/themeStore';
@@ -16,6 +17,10 @@ import NodeDetailPanel from './components/panels/NodeDetailPanel';
 import Toolbar from './components/panels/Toolbar';
 import MapsListPage from './components/maps/MapsListPage';
 import TaskManagerHome from './components/tasks/TaskManagerHome';
+import TaskManagerSidebar from './components/tasks/TaskManagerSidebar';
+import TodayView from './components/tasks/TodayView';
+import CalendarView from './components/tasks/CalendarView';
+import WeeklyReviewView from './components/tasks/WeeklyReviewView';
 import ManageCategoriesModal from './components/settings/ManageCategoriesModal';
 import ManageRelationTypesModal from './components/settings/ManageRelationTypesModal';
 import ManageTagsModal from './components/settings/ManageTagsModal';
@@ -47,6 +52,11 @@ export default function App() {
   // routing library for two routes.
   const [inviteToken, setInviteToken] = useState(matchInviteToken);
   const [verifyEmailToken, setVerifyEmailToken] = useState(matchVerifyEmailToken);
+  // Which map-less Task Manager home page is showing - only relevant when
+  // no map is open; preserved across an open-project round trip so Back
+  // returns to whichever of Today/Calendar/Projects you were on, not always
+  // Projects.
+  const [homeView, setHomeView] = useState<'projects' | 'today' | 'calendar' | 'review'>('projects');
   const theme = useThemeStore((s) => s.theme);
   // Applied to <html> so every screen (including the logged-out auth page)
   // respects it, not just the parts of the tree AccountBadge sits above.
@@ -165,6 +175,19 @@ export default function App() {
     setCurrentMapId(map.id);
   };
 
+  // A frictionless "dump it and forget it" capture, always available from
+  // the sidebar - lands in the user's own Inbox project (get-or-created
+  // server-side, see inbox.service.ts) without navigating away from
+  // wherever the user currently is. Invalidates both the maps list (the
+  // Inbox project may not have existed in the sidebar's project list a
+  // moment ago) and that map's own graph cache (so opening it right after
+  // shows the freshly captured task, not a stale empty graph).
+  const handleQuickCapture = async (name: string) => {
+    const result = await inboxApi.quickCapture(name);
+    await queryClient.invalidateQueries({ queryKey: ['maps'] });
+    await queryClient.invalidateQueries({ queryKey: graphQueryKey(result.mapId) });
+  };
+
   const handleDeleteMap = async (mapId: string) => {
     await mapsApi.remove(mapId);
     if (currentMapId === mapId) setCurrentMapId(null);
@@ -184,14 +207,64 @@ export default function App() {
         }}
       />
 
+      {appMode === 'TASK_MANAGER' && (
+        <TaskManagerSidebar
+          maps={mapsQuery.data ?? []}
+          currentMapId={currentMapId}
+          homeView={homeView}
+          onOpenHome={() => {
+            setHomeView('projects');
+            setCurrentMapId(null);
+          }}
+          onOpenToday={() => {
+            setHomeView('today');
+            setCurrentMapId(null);
+          }}
+          onOpenCalendar={() => {
+            setHomeView('calendar');
+            setCurrentMapId(null);
+          }}
+          onOpenReview={() => {
+            setHomeView('review');
+            setCurrentMapId(null);
+          }}
+          onOpenMap={setCurrentMapId}
+          onOpenTeams={() => setManageTeamsOpen(true)}
+          onOpenSettings={() => setAccountSettingsOpen(true)}
+          onCreateMap={(name) => handleCreateMap(name, 'TASKS')}
+          onQuickCapture={handleQuickCapture}
+        />
+      )}
+
       {!currentMapId ? (
         appMode === 'TASK_MANAGER' ? (
-          <TaskManagerHome
-            maps={mapsQuery.data ?? []}
-            onOpenMap={setCurrentMapId}
-            onCreateMap={handleCreateMap}
-            onOpenTeams={() => setManageTeamsOpen(true)}
-          />
+          homeView === 'today' ? (
+            <TodayView
+              maps={mapsQuery.data ?? []}
+              onOpenTask={(mapId, nodeId) => {
+                setCurrentMapId(mapId);
+                selectNode(nodeId);
+              }}
+            />
+          ) : homeView === 'calendar' ? (
+            <CalendarView
+              maps={mapsQuery.data ?? []}
+              onOpenTask={(mapId, nodeId) => {
+                setCurrentMapId(mapId);
+                selectNode(nodeId);
+              }}
+            />
+          ) : homeView === 'review' ? (
+            <WeeklyReviewView
+              maps={mapsQuery.data ?? []}
+              onOpenTask={(mapId, nodeId) => {
+                setCurrentMapId(mapId);
+                selectNode(nodeId);
+              }}
+            />
+          ) : (
+            <TaskManagerHome maps={mapsQuery.data ?? []} onOpenMap={setCurrentMapId} />
+          )
         ) : (
           <MapsListPage
             maps={
@@ -230,6 +303,8 @@ export default function App() {
                 canEdit={canEdit}
                 isOwner={isOwner}
                 restrictedAccessEnabled={currentMap?.restrictedAccessEnabled ?? false}
+                mapCreatedAt={currentMap?.createdAt ?? new Date().toISOString()}
+                mapTargetDate={currentMap?.targetDate ?? null}
                 onOpenTaskStatuses={() => setManageTaskStatusesOpen(true)}
                 onOpenTags={isTasksWorkspace ? () => setManageTagsOpen(true) : undefined}
                 onViewFullMap={canToggleView ? () => setViewOverride('canvas') : undefined}
@@ -269,6 +344,7 @@ export default function App() {
               isOwner={isOwner}
               restrictedAccessEnabled={currentMap?.restrictedAccessEnabled ?? false}
               taskManagementEnabled={effectiveTaskManagementEnabled}
+              onSelectNode={selectNode}
             />
           )}
 

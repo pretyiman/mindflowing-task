@@ -69,12 +69,24 @@ See the "Mindflow Explained" map (built in-app, in the user's own account) for a
   whole map. To give someone access to work on **one specific task without seeing anything else in
   the project** (e.g. an outside contractor who shouldn't see business-sensitive nodes): (1) turn on
   Restricted Access in Map Settings - this alone makes every non-owner collaborator see *nothing* by
-  default; (2) grant that person a `NodeAccessGrant` on just the task(s) they need, from that task's
-  own Access section in `TaskEditPanel`/`NodeDetailPanel`. This is enforced server-side in
-  `getGraph` itself (a restricted node never even appears in the API response, not just hidden by
-  the UI) and on every per-node endpoint (`requireNodeVisible()`). They still need to *accept* a
-  real invite first (unavoidable - some access record has to exist before scoping means anything),
-  but accepting doesn't imply seeing everything; that's this separate, additional step.
+  default; (2) grant that person a `NodeAccessGrant` on just the task(s) they need. Step (2) doesn't
+  usually need a manual trip to that task's own Access section anymore - **assigning someone to a
+  task auto-grants them a `NodeAccessGrant` on it**, on a restricted map, for the owner (the only
+  actor who can set assignees at all). This fires from every assignment path: the ordinary
+  assignee-picker chip list (`nodes.service.ts`'s `grantAccessForNewAssignees`, called from both
+  `createNode` and `updateNode`'s added-assignee diff) and edge-based auto-assign
+  (`edges.service.ts`'s `tryAutoAssignFromEdge`, which originally had this and is what the node-side
+  version was modeled on). Both are additive-only - unassigning someone never revokes the grant; use
+  the task's own Access section for that. **A support/bug report of "I assigned several tasks but
+  the assignee only sees one" on a restricted map means grants are missing** - before this fix
+  (2026-08-09) manual-picker assignment never granted access at all, only the edge-drawing path did,
+  so any task assigned before that fix landed needs its grant backfilled (a one-off `INSERT INTO
+  node_access_grants ... SELECT ... FROM node_assignees ... WHERE NOT EXISTS (...)` per-map join,
+  not a migration - see git history around that date for the exact query). This is enforced
+  server-side in `getGraph` itself (a restricted node never even appears in the API response, not
+  just hidden by the UI) and on every per-node endpoint (`requireNodeVisible()`). They still need to
+  *accept* a real invite first (unavoidable - some access record has to exist before scoping means
+  anything), but accepting doesn't imply seeing everything; that's this separate, additional step.
 
 ## Account-level App Mode (`User.appMode`)
 
@@ -183,6 +195,190 @@ All of the following are implemented and working, not planned:
   *inside* an open project - there used to be no way to reach Share without first going back to the
   maps list). `TaskEditPanel`/`NodeDetailPanel`'s Assignees section also shows a "You're the only
   one on this project" hint whenever `members.length <= 1`, pointing at Share directly.
+- **Self-management: Today, Calendar, target date/pace, self-assign, due-soon reminders.**
+  `TaskManagerSidebar.tsx` has three top-level nav items above the per-project list - Today,
+  Calendar, Projects - all backed by `useMyTasks.ts`, a shared cross-project "every task assigned to
+  me, across every task-enabled map I can see" hook (extracted so `TodayView.tsx` and
+  `CalendarView.tsx` don't each reimplement the same parallel-fetch-and-flatten). **Calendar**
+  (`CalendarView.tsx`) is a plain month grid (`buildMonthGrid`), frontend-only, no new backend
+  endpoint - task pills per day, colored by priority/status, capped at 3 visible with a "+N more"
+  overflow. **Self-assignment** was never actually broken (the owner is already included in
+  `listMapMembers`, and the assignee picker already lets you toggle yourself) - the real problem was
+  discoverability, fixed by labeling the current user's own assignee chip distinctly ("🙋 You
+  (you)", `TaskEditPanel.tsx`/`NodeDetailPanel.tsx`) rather than any backend change. **Project
+  timeline/pace**: `Map.targetDate` (nullable, owner-settable via Map Settings) - purely an input to
+  a frontend-computed "pace" signal in `ProjectsDashboard.tsx` (`computePace`), comparing % of tasks
+  done against % of the createdAt→targetDate window elapsed, so a project reads "ahead / on track /
+  behind / overdue" rather than just a raw completion percentage. No new backend logic beyond
+  storing/returning the date. **Due-soon reminders**: `Node.dueSoonNotifiedAt` (nullable, never
+  client-editable) marks a task as already reminded-about for its *current* `dueDate` -
+  `nodes.service.ts`'s `updateNode` resets it to `null` on any `dueDate` change, so rescheduling
+  re-arms it. `server/src/lib/dueSoonReminders.ts`'s `checkDueSoonReminders()` finds every not-done
+  task (`completedAt === null`) due within 24h (or already overdue) with `dueSoonNotifiedAt: null`,
+  and fires the same `notify()`+email pipeline task-assignment already uses, just with a new
+  `DUE_SOON` notification type - each eligible task is claimed exactly once, never re-sent. **This
+  check has two triggers, because the app runs in two very different process models**: locally/on
+  Render (`server/src/index.ts` calls `app.listen()` and stays running) a plain `setInterval` fires
+  it every 15 minutes; on Vercel (`api/index.ts` - a stateless serverless function invoked per
+  request, no persistent process for a `setInterval` to live in) it's instead wired to **Vercel Cron**
+  (`vercel.json`'s `crons`, hitting `GET /api/cron/due-soon` once daily) - gated by `CRON_SECRET`
+  (`server/src/env.ts`, optional), which Vercel automatically sends as
+  `Authorization: Bearer <CRON_SECRET>` on its own cron-triggered requests; the route 404s (not
+  401s - doesn't reveal the route's existence) if that header doesn't match. **`CRON_SECRET` must be
+  set in the Vercel project's own environment variables for reminders to actually fire in
+  production** - it does nothing by default. Vercel's Hobby plan limits cron jobs to one invocation
+  per day regardless of the configured schedule; the current `vercel.json` schedule (`0 7 * * *`,
+  once daily) already respects that, so no plan upgrade is required, but a shorter effective cadence
+  would need Pro.
+- **In-project dashboard, due/sort task controls, engagement history.** `ProjectDashboardHeader.tsx`
+  renders the exact same Total/In Progress/Due Today/Overdue/Completed Today/progress-bar/pace/
+  sparkline block `ProjectsDashboard.tsx` shows per-row on the outer Projects list, inline at the top
+  of `TaskListView.tsx` (owner-gated, same as the outer one) - so "how is this project doing" is
+  visible from *inside* the project too, not just from the list you clicked it from. Both share
+  `utils/taskStats.ts`'s `computeStats`/`computePace` and `PaceIndicator.tsx`, extracted from
+  `ProjectsDashboard.tsx` so the two can never disagree. **Filtering** gained a `selectedDueFilter`
+  dimension (`filterGraph.ts`'s `DueFilterValue`: `overdue | today | week | none`) alongside the
+  existing assignee/priority/status filters in the same `FilterPanel.tsx` popover - combine
+  assignee + priority + due to answer "high-priority tasks due today" or "everything assigned to
+  X", which needed no single dedicated UI before this. **Sorting** is a separate, TaskListView-local
+  concept (`SortKey`: default/dueDate/priority/assignee/name, `taskVisuals.ts`'s `PRIORITY_ORDER` for
+  the ranking) - it reorders tasks *within* each status group/column, in both List and Board views;
+  grouping by status stays the primary organization, sort never moves a task across groups. **Task
+  History** (owner-only, see the Collaborator-role note above) gained two things: (1) a `'view'`
+  activity action, written by `POST /nodes/:id/view` (VIEWER-gated - anyone who can see the node can
+  log that they looked at it, same as commenting) and fired from `TaskEditPanel` on every mount, so
+  the owner has actual evidence an assignee opened their task, not just silence. Deduped per
+  (node, user) within a 30-minute window via `activity.service.ts`'s `recordNodeView` - this needs a
+  **Postgres advisory lock** (`pg_advisory_xact_lock`), not just a plain read-then-write or even a
+  single atomic `INSERT...WHERE NOT EXISTS`: React 18 StrictMode double-invokes mount effects in dev,
+  firing two near-simultaneous requests on different connections, and under READ COMMITTED each
+  connection's own dedupe-check subquery evaluates against a snapshot where neither row is committed
+  yet, so both proceed - confirmed via testing (produced 2 rows before the lock, exactly 1 after).
+  `'view' `entries are excluded from the map-wide Activity panel (`listActivity`'s
+  `action: { not: 'view' }`) - that feed is for structural map changes, and "opened this task" from
+  every viewer of every task would drown it out; they still show up in that task's own History via
+  `listNodeActivity`, which never filters by action. (2) `updateNode`'s activity summary is no
+  longer a generic "Updated node X" for every change - `describeNodeUpdate` builds a specific one
+  ("Changed status to Done", "Assigned to Dummy User", "Renamed X to Y") from whichever of
+  name/status/priority/dueDate/notes/assigneeIds actually changed, falling back to the old generic
+  line only when none of those did (e.g. a canvas posX/posY drag). Every non-rename summary ends in
+  `on "nodeName"` - the map-wide panel has no other way to show which node a summary is about, only
+  the rename phrasing already states the name inline and skips the suffix.
+- **Recurring tasks, Weekly Review, Quick Capture/Inbox, query-operator search** (adopted after
+  comparing against Mindwtr, a GTD app - see git history around 2026-08-09 for that analysis).
+  **Recurring tasks**: opt-in `Node.recurrenceRule` (`DAILY | WEEKLY | MONTHLY | WEEKDAYS`,
+  meaningless without a `dueDate`) - "fluid" recurrence, not a fixed clock: `nodes.service.ts`'s
+  `updateNode` computes the NEXT `dueDate` from the moment the task is actually marked done (not
+  from the old, possibly-overdue `dueDate`), so completing something late never leaves the next
+  occurrence already overdue too. On that same DONE transition the task is reset back to the map's
+  first TODO-kind status (`findDefaultTodoStatus`) instead of staying DONE - a recurring task is
+  always either "not due yet" or "due", never permanently finished. A second, system-generated
+  (`userId: null`) History entry ("Recurring task reset for next cycle - due Aug 16") documents the
+  auto-advance separately from the actor's own "changed status to Done" line.
+  **Weekly Review** (`WeeklyReviewView.tsx`, sidebar "🧹 Review"): a single page, not a step-by-step
+  wizard (matches Today/Calendar's own single-screen shape) - Overdue/Unassigned/Stuck-In-Progress
+  across projects the user **owns** (mirrors ProjectsDashboard/ActivityLog's owner-only scoping) plus
+  a personal Completed-This-Week recap via `useMyTasks`. "Stuck" is `updatedAt` idle 7+ days while
+  IN_PROGRESS-kind - an imperfect proxy (any edit bumps `updatedAt`, not just a status-kind change)
+  but simple and good enough. No new backend endpoint - pure frontend aggregation over the existing
+  `graphQueryKey` cache, like ProjectsDashboard/TodayView.
+  **Quick Capture / Inbox**: an always-visible capture input at the top of `TaskManagerSidebar.tsx`
+  (`POST /inbox/quick-capture`) that creates a task without picking a project first - lands in the
+  user's own lazily-get-or-created "Inbox" `TASKS`-workspace project (`inbox.service.ts`'s
+  `getOrCreateInboxMap`, matched by `(ownerId, name)`, same lazy pattern as the built-in "Sub-task
+  of" relation type). **Deliberately no "move task to another project" feature** - captured items
+  are triaged (renamed, prioritized, assigned, statused) inside the Inbox project itself, not
+  relocated out of it; Mindflow has no cross-map node-move operation at all. Known, accepted
+  limitation: matched by name, not a dedicated flag, so renaming your own auto-created Inbox means
+  the next capture creates a second one rather than reusing the renamed project - rare and
+  non-destructive, not worth a schema field to guard against.
+  **Query-operator search**: typing `priority:high due:today assignee:dummy free text` into the
+  existing search box (`Toolbar.tsx`) and hitting Enter resolves the recognized tokens
+  (`searchQuery.ts`'s `parseSearchQuery`) into the SAME `selectedPriority`/`selectedDueFilter`/
+  `selectedTaskStatusId`/`selectedAssigneeId` store fields the dropdown popover (`FilterPanel.tsx`)
+  already drives - not a new filtering capability, just a faster input method for the existing ones.
+  Resolved only on Enter, not per-keystroke, specifically so the box shows exactly what's being
+  typed while typing (a live per-keystroke strip-and-resolve would either fight a box the user is
+  still composing, or need a second "raw text" field to stay in sync - Enter-to-resolve avoids both).
+  An unrecognized operator or a value that matches nobody (e.g. `assignee:nobody`) falls through as
+  plain free text rather than silently vanishing. Needed `assignee:` to resolve a name/email
+  substring to a userId, which is why `useMapMembers.ts` exists - extracted from three previously
+  -duplicated `mapsApi.members()` fetches (GraphCanvas/FilterPanel/TaskListView) once a fourth
+  consumer (Toolbar) needed the same data.
+- **Board default, personal task dashboard, escalating reminders, standalone Reminders.**
+  `TaskListView.tsx` now opens on **Board**, not List (`view` state's initial value) - a plain
+  default flip, no new capability. `ProjectDashboardHeader.tsx` was generalized from
+  `{ graph, mapCreatedAt, mapTargetDate }` to `{ nodes, taskStatuses, pace?, title? }` so the exact
+  same stat block can render two different scopes: the owner's project-wide totals (unchanged,
+  no `title`, `pace` computed from `Map.targetDate`) and, for a **non-owner**, a "My Tasks" personal
+  slice (`title="My Tasks"`, `nodes` pre-filtered to `assigneeIds.includes(currentUserId)`, no
+  `pace` - project-level target-date pacing doesn't mean anything for one person's subset of the
+  work). Gated by `isOwner`, not by the list's own `scope` prop - a `TASKS`-workspace project gives
+  every collaborator `scope: 'all'` regardless of ownership, so the personal dashboard still needs
+  its own independent check to only show for non-owners. **Due-soon reminders became recurring**:
+  `dueSoonReminders.ts`'s `checkDueSoonReminders` used to fire once per task (dueSoonNotifiedAt as a
+  one-shot flag) and go silent forever after; it's now "last reminded at", re-eligible once
+  `RENOTIFY_INTERVAL_MS` (24h) has passed, so a task that stays overdue and untouched keeps getting
+  re-nagged daily instead of reminding once and never again - this is what actually answers "notify
+  me if he's ignoring the task." Message wording also now distinguishes actually-overdue
+  (`"X" is overdue`) from merely-coming-up (`"X" is due soon"`), previously always the latter even
+  well past the deadline. **Standalone Reminders** (`Reminder` model, `REMINDER` notification type):
+  a personal "wedding at 4pm on Aug 19" note, deliberately NOT a task - no status/priority/assignee,
+  just `title`/`note`/`remindAt`, and it fires AT its own moment rather than the due-soon pipeline's
+  24h-lead-time warning. No Map at all (unlike everything else in this schema) - `reminders.routes.ts`
+  is gated by `requireAuth` alone, no map/collaborator check, since "list mine" is the entire
+  visibility rule. `checkReminders()` (`reminders.service.ts`) is one-shot per reminder (`notifiedAt`
+  never resets, unlike the recurring due-soon check above) and routes its Notification through the
+  user's own lazily-created Inbox project purely to satisfy `Notification.mapId` (non-nullable) -
+  a Reminder isn't "about" that project, Inbox is just the closest thing to a personal home base, and
+  this is why a user who has never used Quick Capture can still end up with an auto-created Inbox
+  the first time a Reminder notification fires. **Both checks share the same trigger** - folded into
+  the SAME `index.ts` `setInterval` (local/Render, every 15 min) and the SAME renamed
+  `/cron/reminders` route (Vercel, `vercel.json`) rather than adding a second cron job entry.
+  **Precision is bounded by how often the check runs, not by remindAt itself** - locally/on Render
+  (15-minute interval) a reminder fires within ~15 minutes of its moment; on Vercel Hobby (once-daily
+  cron, see the due-soon reminders entry above for why) a same-day reminder can arrive up to ~24h
+  late in the worst case - same accepted tradeoff as due-soon reminders, not newly introduced here.
+  Calendar (`CalendarView.tsx`) renders Reminders as their own pill style (`.calendar-reminder-pill`,
+  🔔 + time, fixed accent color - no status to tint by, unlike task pills) alongside task pills in
+  each day cell, with a "+ Add Reminder" button opening a `Modal` (title/date/time/note) and a
+  click-to-view-and-delete `Modal` on each pill.
+- **In-task Checklist** (`ChecklistItem` model): a lightweight to-do list *inside* a task -
+  "API integration ☐, Frontend page ☐, Testing ☐" - deliberately NOT a Sub-task. Sub-tasks reuse a
+  full Node+Edge (own status/priority/assignee/history), which is the right tool for breaking a task
+  into independently-trackable pieces of work; a checklist item is just `text` + `done` + `order`,
+  for steps that only make sense as part of the one task, checked off inline. **Visibility/edit is
+  owner-or-current-assignee, not "any editor" (Sub-tasks/Attachments) or "anyone who can see the
+  node" (comments)** - the first feature in this codebase needing that third permission shape, so it
+  got its own pair of authorization helpers (`requireNodeOwnerOrAssignee`/
+  `requireResourceNodeOwnerOrAssignee` in `plugins/authorization.ts`, mirroring
+  `requireNodeVisible`/`requireResourceNodeVisible`'s existing two-tier pattern). **Role doesn't
+  matter, only "are you currently assigned"** - even a VIEWER-role collaborator gets full checklist
+  read/write the moment they're assigned to that task, since assignment itself is what grants access
+  here; confirmed live (downgraded an assignee to VIEWER, they could still add/toggle items; a
+  same-map EDITOR who wasn't assigned got a 404 on every checklist route, same "don't reveal
+  existence" convention as every other gate in that file). Drag-to-reorder
+  (`reorderChecklistItems`) is a full rewrite of every item's `order` to match the dragged-to
+  array exactly, not a partial shuffle - simpler and race-free if two people reorder at once (last
+  PATCH just wins outright). **CSS gotcha hit and fixed while building this**: `.property input`
+  (global form-field styling: `width:100%`, background, border, padding - meant for text/select/
+  textarea) also matches a bare `<input type="checkbox">`, since nothing before this feature had
+  ever nested a checkbox inside a `.property` block - it silently stretched the checkbox to the
+  full row width (1093px in testing) with the label's text pushed off to the far right. Fixed with
+  a scoped override (`.checklist-item-label input[type='checkbox']`), not a change to the shared
+  global rule. Same root cause, second symptom: `.property label`'s uppercase/muted/small
+  section-header styling was also bleeding onto the checklist item's own per-item `<label>`
+  (needed for native click-to-toggle), rendering user-typed item text as "TESTING" instead of
+  "Testing" - fixed by explicitly resetting every one of those properties on
+  `.property .checklist-item-label`, not just `text-transform`. If anything else ever needs a
+  checkbox/radio inside a `.property` block, expect to hit this again.
+- **`TaskEditPanel.tsx` two-column layout**: Notes/Instructions on the left, Sub-tasks/Checklist/
+  Attachments stacked on the right (`.task-detail-columns`/`.task-detail-column-right`) - the
+  textarea used to be full page width with the rest of the page empty beside it. Collapses back to
+  a single stacked column under 860px (same breakpoint pattern as `.today-dashboard-row`). Only
+  `TaskEditPanel` (the full task-detail *page*) got this - `NodeDetailPanel.tsx`'s canvas-side
+  panel is a fixed 340px sidebar (`.detail-panel`), nowhere near wide enough for a second column,
+  so it deliberately keeps the single-column stacked layout.
 - Full graph CRUD: nodes, edges (with 4-handle connection points and per-edge label/color/style
   overrides), categories, relation types (with directional/hierarchy flags and per-relation-type
   in/out degree caps), tags (many-to-many, filterable).

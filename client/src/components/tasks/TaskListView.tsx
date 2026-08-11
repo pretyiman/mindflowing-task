@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
-import type { GraphData, GraphNode, MapMember, TaskPriority } from '../../types/graph';
+import type { GraphData, GraphNode, MapMember } from '../../types/graph';
 import { nodesApi } from '../../api/nodes.api';
-import { mapsApi } from '../../api/maps.api';
 import { ApiError } from '../../api/client';
 import { useAuthStore } from '../../state/authStore';
 import { useGraphStore } from '../../state/graphStore';
+import { useMapMembers } from '../../hooks/useMapMembers';
 import { filterGraph, isFilterActive } from '../graph/filterGraph';
+import { PRIORITY_COLOR, PRIORITY_ORDER, RECURRENCE_LABEL, statusPillStyle } from '../../constants/taskVisuals';
+import { computeStats, computePace } from '../../utils/taskStats';
 import TaskEditPanel from './TaskEditPanel';
 import TaskBoardLayout from './TaskBoardLayout';
+import ProjectDashboardHeader from './ProjectDashboardHeader';
 
 interface Props {
   mapId: string;
@@ -16,6 +19,8 @@ interface Props {
   canEdit: boolean;
   isOwner: boolean;
   restrictedAccessEnabled: boolean;
+  mapCreatedAt: string;
+  mapTargetDate: string | null;
   onOpenTaskStatuses: () => void;
   onOpenTags?: () => void;
   onViewFullMap?: () => void;
@@ -29,14 +34,62 @@ interface Props {
   onInitialTaskConsumed?: () => void;
 }
 
-const PRIORITY_COLOR: Record<TaskPriority, string> = {
-  LOW: '#8899aa',
-  MEDIUM: '#4a90d9',
-  HIGH: '#e08a3c',
-  URGENT: '#d94f4f'
+const NO_STATUS = '__none__';
+
+type SortKey = 'default' | 'dueDate' | 'priority' | 'assignee' | 'name';
+
+const SORT_LABEL: Record<SortKey, string> = {
+  default: 'Default',
+  dueDate: 'Due date',
+  priority: 'Priority',
+  assignee: 'Assignee',
+  name: 'Name'
 };
 
-const NO_STATUS = '__none__';
+// Sorts WITHIN each status group (list view) / column (board view) - grouping
+// by status stays the primary organization, this just orders each group.
+// 'default' is a no-op (keeps creation order, today's existing behavior).
+// Nulls/unset values always sort last, regardless of key, so "arranging" by
+// due date or priority surfaces the tasks that actually have one first.
+function buildComparator(
+  sortKey: SortKey,
+  memberById: Map<string, MapMember>
+): ((a: GraphNode, b: GraphNode) => number) | null {
+  switch (sortKey) {
+    case 'dueDate':
+      return (a, b) => {
+        if (!a.dueDate && !b.dueDate) return 0;
+        if (!a.dueDate) return 1;
+        if (!b.dueDate) return -1;
+        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+      };
+    case 'priority':
+      return (a, b) => {
+        const ra = a.priority ? PRIORITY_ORDER[a.priority] : 0;
+        const rb = b.priority ? PRIORITY_ORDER[b.priority] : 0;
+        return rb - ra;
+      };
+    case 'assignee': {
+      const nameOf = (n: GraphNode) => {
+        const first = n.assigneeIds[0];
+        const member = first ? memberById.get(first) : undefined;
+        return member?.name ?? member?.email ?? null;
+      };
+      return (a, b) => {
+        const na = nameOf(a);
+        const nb = nameOf(b);
+        if (!na && !nb) return 0;
+        if (!na) return 1;
+        if (!nb) return -1;
+        return na.localeCompare(nb);
+      };
+    }
+    case 'name':
+      return (a, b) => a.name.localeCompare(b.name);
+    default:
+      return null;
+  }
+}
 
 export default function TaskListView({
   mapId,
@@ -45,6 +98,8 @@ export default function TaskListView({
   canEdit,
   isOwner,
   restrictedAccessEnabled,
+  mapCreatedAt,
+  mapTargetDate,
   onOpenTaskStatuses,
   onOpenTags,
   onViewFullMap,
@@ -53,16 +108,13 @@ export default function TaskListView({
   onInitialTaskConsumed
 }: Props) {
   const currentUserId = useAuthStore((s) => s.user?.id);
-  const [members, setMembers] = useState<MapMember[]>([]);
+  const members = useMapMembers(mapId);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<'list' | 'board'>('list');
-
-  useEffect(() => {
-    mapsApi.members(mapId).then(setMembers);
-  }, [mapId]);
+  const [view, setView] = useState<'list' | 'board'>('board');
+  const [sortBy, setSortBy] = useState<SortKey>('default');
 
   useEffect(() => {
     if (!initialTaskId) return;
@@ -81,7 +133,8 @@ export default function TaskListView({
     connectedToNodeId,
     selectedAssigneeId,
     selectedTaskStatusId,
-    selectedPriority
+    selectedPriority,
+    selectedDueFilter
   } = useGraphStore();
   const filterState = {
     searchQuery,
@@ -90,7 +143,8 @@ export default function TaskListView({
     connectedToNodeId,
     selectedAssigneeId,
     selectedTaskStatusId,
-    selectedPriority
+    selectedPriority,
+    selectedDueFilter
   };
   const matchedIds = isFilterActive(filterState) ? filterGraph(graph, filterState) : null;
 
@@ -101,13 +155,16 @@ export default function TaskListView({
   const memberById = new Map(members.map((m) => [m.id, m]));
   const sortedStatuses = [...graph.taskStatuses].sort((a, b) => a.order - b.order);
 
+  const comparator = buildComparator(sortBy, memberById);
+  const sortTasks = (tasks: GraphNode[]) => (comparator ? [...tasks].sort(comparator) : tasks);
+
   const namedGroups = sortedStatuses.map((s) => ({
     key: s.id,
     label: s.name,
     color: s.color,
-    tasks: visibleNodes.filter((n) => n.taskStatusId === s.id)
+    tasks: sortTasks(visibleNodes.filter((n) => n.taskStatusId === s.id))
   }));
-  const unstatusedTasks = visibleNodes.filter((n) => n.taskStatusId === null);
+  const unstatusedTasks = sortTasks(visibleNodes.filter((n) => n.taskStatusId === null));
   const groups =
     unstatusedTasks.length > 0
       ? [...namedGroups, { key: NO_STATUS, label: 'No Status', color: '#888888', tasks: unstatusedTasks }]
@@ -163,34 +220,68 @@ export default function TaskListView({
       .map((m) => m.name ?? m.email)
       .join(', ');
     const status = sortedStatuses.find((s) => s.id === task.taskStatusId);
+    const accentColor = task.priority ? PRIORITY_COLOR[task.priority] : 'var(--border)';
     return (
-      <tr key={task.id} className="task-row" onClick={() => setSelectedTaskId(task.id)}>
-        <td>
-          {task.priority && (
-            <span className="task-priority-dot" style={{ background: PRIORITY_COLOR[task.priority] }} />
+      <div
+        key={task.id}
+        className="task-card priority-accent-card"
+        style={{ borderLeftColor: accentColor }}
+        onClick={() => setSelectedTaskId(task.id)}
+      >
+        <div className="task-card-main">
+          <span className="task-card-name">{task.name}</span>
+          {(task.dueDate || (scope === 'all' && assigneeNames)) && (
+            <div className="task-card-meta">
+              {task.dueDate && (
+                <span>
+                  📅 {formatDueDate(task.dueDate)}
+                  {task.recurrenceRule && <span title={`Repeats ${RECURRENCE_LABEL[task.recurrenceRule]}`}> 🔁</span>}
+                </span>
+              )}
+              {scope === 'all' && <span>{assigneeNames || 'Unassigned'}</span>}
+            </div>
           )}
-          {task.name}
-        </td>
-        {scope === 'all' && <td>{assigneeNames || 'Unassigned'}</td>}
-        <td>
-          {status ? (
-            <span className="task-status-badge">
-              <span className="color-swatch" style={{ background: status.color }} /> {status.name}
-            </span>
-          ) : (
-            <span className="hint-text">No status</span>
-          )}
-        </td>
-        <td>{task.dueDate ? formatDueDate(task.dueDate) : ''}</td>
-      </tr>
+        </div>
+        <span className="status-pill" style={statusPillStyle(status?.color ?? '#8899aa')}>
+          <span className="status-pill-dot" />
+          {status?.name ?? 'No status'}
+        </span>
+      </div>
     );
   };
 
   return (
     <div className="task-list-view">
+      {isOwner ? (
+        <ProjectDashboardHeader
+          nodes={graph.nodes}
+          taskStatuses={graph.taskStatuses}
+          pace={computePace(mapCreatedAt, mapTargetDate, computeStats(graph.nodes, graph.taskStatuses).percent)}
+        />
+      ) : (
+        currentUserId != null && (
+          <ProjectDashboardHeader
+            title="My Tasks"
+            nodes={graph.nodes.filter((n) => n.assigneeIds.includes(currentUserId))}
+            taskStatuses={graph.taskStatuses}
+          />
+        )
+      )}
       <div className="task-list-header">
         <h2>{scope === 'mine' ? 'My Tasks' : 'Tasks'}</h2>
         <div className="task-list-header-actions">
+          <select
+            className="task-sort-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortKey)}
+            title="Arrange tasks within each status"
+          >
+            {(Object.keys(SORT_LABEL) as SortKey[]).map((key) => (
+              <option key={key} value={key}>
+                Sort: {SORT_LABEL[key]}
+              </option>
+            ))}
+          </select>
           <div className="tag-chip-list">
             <button
               type="button"
@@ -268,9 +359,7 @@ export default function TaskListView({
               <span className="color-swatch" style={{ background: group.color }} /> {group.label} (
               {group.tasks.length})
             </h3>
-            <table className="manage-table">
-              <tbody>{group.tasks.map(renderTaskRow)}</tbody>
-            </table>
+            <div className="task-card-list">{group.tasks.map(renderTaskRow)}</div>
           </div>
         ))
       )}

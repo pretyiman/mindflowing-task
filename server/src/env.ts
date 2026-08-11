@@ -25,7 +25,13 @@ const envSchema = z.object({
   SMTP_FROM: z.string().default('Mindflow <no-reply@mindflow.app>'),
   // Optional - "Sign in with Google" (auth.service.ts's googleSignIn()) is
   // simply unavailable until this is set, rather than failing to start.
-  GOOGLE_CLIENT_ID: z.string().optional()
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  // Optional - when set, Vercel automatically sends it as
+  // `Authorization: Bearer <CRON_SECRET>` on requests it makes to trigger a
+  // configured cron job (see vercel.json's crons + routes/cron.routes.ts).
+  // Unset locally/on Render, where the due-soon check instead runs via a
+  // plain setInterval in index.ts - see that file.
+  CRON_SECRET: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);

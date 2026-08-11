@@ -220,8 +220,18 @@ export default function TaskDiscussion({ nodeId, isOwner }: Props) {
           ) : (
             activity.map((entry) => (
               <div key={entry.id} className="history-entry">
-                {displayName(entry.user)} {entry.summary.charAt(0).toLowerCase() + entry.summary.slice(1)} ·{' '}
-                {timeAgo(entry.createdAt)}
+                {entry.user ? (
+                  <>
+                    {displayName(entry.user)} {entry.summary.charAt(0).toLowerCase() + entry.summary.slice(1)}
+                  </>
+                ) : (
+                  // No actor (system-generated, e.g. a recurring task's own
+                  // reset - see nodes.service.ts's updateNode - or a deleted
+                  // user's past entry) - the summary reads fine on its own
+                  // without a "Someone ..." filler prefix.
+                  entry.summary
+                )}{' '}
+                · {timeAgo(entry.createdAt)}
               </div>
             ))
           )}

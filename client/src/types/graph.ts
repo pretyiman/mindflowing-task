@@ -12,6 +12,10 @@ export interface MindMap {
   restrictedAccessEnabled: boolean;
   taskManagementEnabled: boolean;
   workspaceType: WorkspaceType;
+  // Optional project target completion date, owner-settable via Map
+  // Settings - purely a pace signal (see ProjectsDashboard's computeStats),
+  // no other behavior depends on it.
+  targetDate: string | null;
 }
 
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
@@ -89,11 +93,18 @@ export interface GraphNode {
   assigneeIds: string[];
   priority: TaskPriority | null;
   dueDate: string | null;
+  // Opt-in "fluid" recurrence - see schema.prisma's Node.recurrenceRule
+  // comment. Meaningless without dueDate also set.
+  recurrenceRule: RecurrenceRule | null;
   // Auto-tracked server-side, never client-editable - see the schema.prisma
   // comment on Node.startedAt/completedAt for the exact transition rules.
   startedAt: string | null;
   completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
+
+export type RecurrenceRule = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'WEEKDAYS';
 
 export interface NodeGroup {
   id: string;

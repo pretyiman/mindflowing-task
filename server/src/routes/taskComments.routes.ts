@@ -77,4 +77,19 @@ export async function taskCommentsRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireResourceMapOwner(lookupNode)] },
     async (request) => activityService.listNodeActivity(request.params.id, request.query.cursor)
   );
+
+  // VIEWER-level, same bar as reading/posting comments - anyone who can see
+  // this node can log that they looked at it. The resulting entry is still
+  // only ever READ by the owner (via /activity above); this just writes it.
+  // Fired by TaskEditPanel on mount - see activity.service.ts's
+  // recordNodeView for the dedupe rule.
+  app.post<{ Params: { id: string } }>(
+    '/nodes/:id/view',
+    { preHandler: [requireAuth, requireResourceMapAccess(lookupNode, 'VIEWER'), requireNodeVisible()] },
+    async (request, reply) => {
+      const node = await lookupNode(request.params.id);
+      if (node) await activityService.recordNodeView(request.params.id, node.mapId, request.user!.id);
+      reply.status(204).send();
+    }
+  );
 }

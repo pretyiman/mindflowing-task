@@ -31,6 +31,14 @@ model Map {
   // renders a graph-free task list/board shell instead of the canvas - see
   // maps.service.ts's createMap and App.tsx's workspace-type branch.
   workspaceType WorkspaceType     @default(GRAPH) @map("workspace_type")
+  // Optional target completion date for the whole project - distinct from
+  // any individual Node.dueDate. Nullable/opt-in like restrictedAccessEnabled
+  // (a map that never sets one just doesn't show pace info). Owner-settable
+  // only, via Map Settings - see maps.service.ts's updateMap. Used purely to
+  // compute a client-side "pace" signal (% of tasks done vs % of the
+  // createdAt→targetDate window elapsed) - no new backend logic beyond
+  // storing/returning the date itself.
+  targetDate    DateTime?         @map("target_date")
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
@@ -79,6 +87,7 @@ model User {
   notifications      Notification[]
   taskAttachments    TaskAttachment[]
   teams              Team[]
+  reminders          Reminder[]
 
   @@map("users")
 }
@@ -162,6 +171,8 @@ enum NotificationType {
   COMMENT
   MENTION
   STATUS_CHANGED
+  DUE_SOON
+  REMINDER
 }
 
 // In-app notification, polled (see notifications.ts's fire-and-forget notify()
@@ -184,6 +195,34 @@ model Notification {
 
   @@index([userId, read, createdAt])
   @@map("notifications")
+}
+
+// A standalone personal reminder - "wedding at 4pm on Aug 19", not a task:
+// no status/priority/assignee, just a note and a moment to be reminded at.
+// Deliberately its own model rather than shoehorned into Node/dueDate - a
+// task's dueDate + due-soon reminder is a LEAD-TIME warning ("this is coming
+// up"), fired up to 24h before; a Reminder fires AT remindAt itself, and has
+// no notion of being "done" the way a task does. userId-owned directly, no
+// Map at all - unlike everything else in this schema, a reminder isn't part
+// of any project's graph, matching Today/Calendar's own cross-map personal
+// surface rather than the per-map task model.
+model Reminder {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  title      String
+  note       String?
+  remindAt   DateTime  @map("remind_at")
+  // Set once checkReminders() (dueSoonReminders.ts) has fired the
+  // notify+email pipeline for this reminder - one-shot, never re-armed
+  // (unlike Node.dueSoonNotifiedAt, a Reminder has no "still overdue, still
+  // ignored" renotify concept - it fires once, at its moment, and is done).
+  notifiedAt DateTime? @map("notified_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, remindAt])
+  @@map("reminders")
 }
 
 // Grants a non-owner user access to a map. Distinct from Map.ownerId, which
@@ -346,12 +385,26 @@ model Node {
   // nodes.service.ts. Distinct from startedAt/completedAt below, which are
   // never client-editable at all.
   dueDate       DateTime?     @map("due_date")
+  // Opt-in, meaningless without a dueDate. "Fluid" recurrence, not a fixed
+  // clock - nodes.service.ts's updateNode computes the NEXT dueDate from the
+  // moment the task is actually completed (not from the stale old dueDate),
+  // so a late completion doesn't leave the next occurrence already overdue.
+  // On that same transition the task is reset back to the map's first
+  // TODO-kind status rather than staying DONE - a recurring task is always
+  // either "not due yet" or "due", never permanently finished.
+  recurrenceRule String?      @map("recurrence_rule")
   // Auto-tracked by the server off status-kind transitions (see
   // nodes.service.ts's updateNode) - never accepted from a client payload.
   // startedAt is a first-touched marker (set once, never cleared);
   // completedAt clears if the task moves back out of a DONE-kind status.
   startedAt     DateTime?     @map("started_at")
   completedAt   DateTime?     @map("completed_at")
+  // Set when a due-soon reminder has been sent for the CURRENT dueDate - reset
+  // to null whenever dueDate changes (see nodes.service.ts's updateNode), so
+  // rescheduling a task makes it eligible for a fresh reminder rather than
+  // staying silently suppressed forever. Never client-editable; only touched
+  // by dueSoonReminders.ts's periodic check.
+  dueSoonNotifiedAt DateTime? @map("due_soon_notified_at")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
@@ -368,6 +421,7 @@ model Node {
   notifications Notification[]
   attachments   TaskAttachment[]
   assignees     NodeAssignee[]
+  checklistItems ChecklistItem[]
 
   @@index([mapId])
   @@index([categoryId])
@@ -441,6 +495,33 @@ model TaskAttachment {
 
   @@index([nodeId, createdAt])
   @@map("task_attachments")
+}
+
+// A lightweight in-task checklist - "API integration [x], Frontend page [ ],
+// Testing [ ]" - deliberately NOT a Sub-task (see nodes.service.ts's own
+// Sub-task comment, which reuses a full Node+Edge): no status/priority/
+// assignee of its own, just a line of text and a checkbox. Visibility/edit
+// is narrower than everything else on a task - owner or a CURRENT assignee
+// of this specific node, not "anyone who can see the node" (TaskComment) or
+// "any editor" (Sub-tasks/TaskAttachment) - see authorization.ts's
+// requireNodeOwnerOrAssignee. A checklist is a working doc between the owner
+// and whoever's actually doing the work, not exposed to every collaborator
+// who happens to have visibility on the task for an unrelated reason (e.g. a
+// tag-scope grant). order is a plain manual sort key, set by the client's
+// drag-reorder (checklist.service.ts's reorderChecklistItems does a full
+// rewrite of every item's order in one go, not a partial shuffle).
+model ChecklistItem {
+  id        String   @id @default(uuid())
+  nodeId    String   @map("node_id")
+  text      String
+  done      Boolean  @default(false)
+  order     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, order])
+  @@map("checklist_items")
 }
 
 // Customizable per-map status column (Trello-list style) - mirrors

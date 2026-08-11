@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 
-export type ActivityAction = 'create' | 'update' | 'delete';
+export type ActivityAction = 'create' | 'update' | 'delete' | 'view';
 export type ActivityTargetType = 'node' | 'edge' | 'group' | 'category' | 'relationType' | 'tag' | 'taskStatus';
 
 /**

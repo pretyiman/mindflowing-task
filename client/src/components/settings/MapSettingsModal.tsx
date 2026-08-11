@@ -15,6 +15,7 @@ export default function MapSettingsModal({ map, isOwner, onClose }: Props) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(map.name);
   const [description, setDescription] = useState(map.description ?? '');
+  const [targetDate, setTargetDate] = useState(map.targetDate ? map.targetDate.slice(0, 10) : '');
   const [error, setError] = useState<string | null>(null);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['maps'] });
@@ -48,6 +49,18 @@ export default function MapSettingsModal({ map, isOwner, onClose }: Props) {
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to change access mode');
+    }
+  };
+
+  const handleSaveTargetDate = async () => {
+    const current = map.targetDate ? map.targetDate.slice(0, 10) : '';
+    if (targetDate === current) return;
+    try {
+      await mapsApi.update(map.id, { targetDate: targetDate ? new Date(targetDate).toISOString() : null });
+      invalidate();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to update target date');
     }
   };
 
@@ -134,6 +147,24 @@ export default function MapSettingsModal({ map, isOwner, onClose }: Props) {
         <p className="hint-text" style={{ marginBottom: 0 }}>
           This is a Project workspace - task management is always on.
         </p>
+      )}
+
+      {(map.taskManagementEnabled || map.workspaceType === 'TASKS') && (
+        <div className="property" style={{ marginTop: 16 }}>
+          <label>Target Date</label>
+          <input
+            type="date"
+            value={targetDate}
+            onChange={(e) => setTargetDate(e.target.value)}
+            onBlur={handleSaveTargetDate}
+            disabled={!isOwner}
+            title={!isOwner ? 'Only the project owner can set the target date' : undefined}
+          />
+          <p className="hint-text" style={{ marginTop: 4, marginBottom: 0 }}>
+            Optional - when set, projects show a pace signal (days remaining vs. task completion),
+            not just percent-done.
+          </p>
+        </div>
       )}
 
       {error && <p className="error-text">{error}</p>}

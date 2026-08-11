@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { MapMember, NodeCategory, TaskStatus } from '../../types/graph';
+import type { GraphNode, MapMember, NodeCategory, TaskStatus } from '../../types/graph';
 
 export interface QuickAddPayload {
   name: string;
@@ -14,6 +14,13 @@ export interface NodeInteractionContextValue {
   taskManagementEnabled: boolean;
   taskStatuses: TaskStatus[];
   members: MapMember[];
+  // Edge-based task-to-node linking (the simple alternative to matching by
+  // email/phone): any node connected by a plain edge to a task node shows a
+  // small badge summarizing that task's status - no dedicated relation type
+  // or schema change needed, an ordinary drawn connection is the link. Keyed
+  // by node id, values are the linked task nodes themselves (never includes
+  // task nodes as keys - see GraphCanvas.tsx's computation).
+  linkedTasksByNodeId: Map<string, GraphNode[]>;
 }
 
 export const NodeInteractionContext = createContext<NodeInteractionContextValue | null>(null);

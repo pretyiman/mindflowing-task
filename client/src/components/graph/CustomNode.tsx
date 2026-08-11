@@ -1,23 +1,16 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
-import type { TaskPriority } from '../../types/graph';
 import type { RFEntityNode } from './graphAdapter';
 import { useNodeInteraction } from './NodeInteractionContext';
-
-const PRIORITY_COLOR: Record<TaskPriority, string> = {
-  LOW: '#8899aa',
-  MEDIUM: '#4a90d9',
-  HIGH: '#e08a3c',
-  URGENT: '#d94f4f'
-};
+import { PRIORITY_COLOR } from '../../constants/taskVisuals';
 
 function formatDueDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 export default function CustomNode({ id, data, selected }: NodeProps<RFEntityNode>) {
-  const { categories, onQuickAdd, canEdit, isOwner, taskManagementEnabled, taskStatuses, members } =
+  const { categories, onQuickAdd, canEdit, isOwner, taskManagementEnabled, taskStatuses, members, linkedTasksByNodeId } =
     useNodeInteraction();
   const isRestricted = isOwner && (data.raw.restrictToGrantsOnly || data.raw.hasAccessGrants);
 
@@ -26,6 +19,16 @@ export default function CustomNode({ id, data, selected }: NodeProps<RFEntityNod
   const assignees = isTrackedTask
     ? data.raw.assigneeIds.map((aid) => members.find((m) => m.id === aid)).filter((m): m is NonNullable<typeof m> => !!m)
     : [];
+
+  // Edge-based linked-task badge - only for non-task nodes (a task node
+  // already shows its own status strip above; this is for the entity a task
+  // is *about*, e.g. a person node connected to a task concerning them).
+  const linkedTasks = taskManagementEnabled && !data.raw.isTask ? linkedTasksByNodeId.get(id) ?? [] : [];
+  const linkedTaskStatusById = new Map(taskStatuses.map((s) => [s.id, s]));
+  const linkedTasksDone = linkedTasks.filter(
+    (t) => t.taskStatusId !== null && linkedTaskStatusById.get(t.taskStatusId)?.kind === 'DONE'
+  ).length;
+  const linkedTasksAllDone = linkedTasks.length > 0 && linkedTasksDone === linkedTasks.length;
   const isOverdue =
     isTrackedTask &&
     !!data.raw.dueDate &&
@@ -133,6 +136,17 @@ export default function CustomNode({ id, data, selected }: NodeProps<RFEntityNod
           style={{ background: taskStatus.color }}
           title={`Status: ${taskStatus.name}`}
         />
+      )}
+
+      {linkedTasks.length > 0 && (
+        <span
+          className={`flow-node-linked-tasks-badge${linkedTasksAllDone ? ' flow-node-linked-tasks-badge-done' : ''}`}
+          title={`Linked tasks:\n${linkedTasks
+            .map((t) => `${t.name} - ${t.taskStatusId ? linkedTaskStatusById.get(t.taskStatusId)?.name ?? 'Unknown status' : 'No status'}`)
+            .join('\n')}`}
+        >
+          📋 {linkedTasksDone}/{linkedTasks.length}
+        </span>
       )}
 
       {selected && canEdit && (

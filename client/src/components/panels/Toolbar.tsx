@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import type { GraphData } from '../../types/graph';
 import { useGraphStore } from '../../state/graphStore';
+import { useMapMembers } from '../../hooks/useMapMembers';
 import { isFilterActive, filterGraph } from '../graph/filterGraph';
+import { parseSearchQuery } from '../../utils/searchQuery';
 import FilterPanel from './FilterPanel';
 
 interface Props {
@@ -28,6 +30,7 @@ export default function Toolbar({
   showGraphFilters = true
 }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const members = useMapMembers(mapId, taskManagementEnabled);
 
   const {
     searchQuery,
@@ -36,8 +39,13 @@ export default function Toolbar({
     selectedGroupId,
     connectedToNodeId,
     selectedAssigneeId,
+    setSelectedAssigneeId,
     selectedTaskStatusId,
-    selectedPriority
+    setSelectedTaskStatusId,
+    selectedPriority,
+    setSelectedPriority,
+    selectedDueFilter,
+    setSelectedDueFilter
   } = useGraphStore();
   const filterState = {
     searchQuery,
@@ -46,7 +54,8 @@ export default function Toolbar({
     connectedToNodeId,
     selectedAssigneeId,
     selectedTaskStatusId,
-    selectedPriority
+    selectedPriority,
+    selectedDueFilter
   };
   const filterActive = isFilterActive(filterState);
   // Search box covers name/tags/properties on its own - the advanced popover
@@ -57,8 +66,25 @@ export default function Toolbar({
     connectedToNodeId !== null ||
     selectedAssigneeId !== null ||
     selectedTaskStatusId !== null ||
-    selectedPriority !== null;
+    selectedPriority !== null ||
+    selectedDueFilter !== null;
   const matchCount = graph && filterActive ? filterGraph(graph, filterState).size : null;
+
+  // Query-operator search (priority:/due:/status:/assignee:) - resolved on
+  // Enter, not on every keystroke, so the box shows exactly what you type
+  // while typing and only "commits" into filters + remaining free text once
+  // you're done. Not a new filtering capability - see searchQuery.ts - just
+  // a faster way to set the same dropdowns FilterPanel already exposes.
+  const handleSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || !graph) return;
+    const { freeText, operators } = parseSearchQuery(searchQuery, graph.taskStatuses, members);
+    if (Object.keys(operators).length === 0) return;
+    setSearchQuery(freeText);
+    if (operators.priority !== undefined) setSelectedPriority(operators.priority);
+    if (operators.dueFilter !== undefined) setSelectedDueFilter(operators.dueFilter);
+    if (operators.taskStatusId !== undefined) setSelectedTaskStatusId(operators.taskStatusId);
+    if (operators.assigneeId !== undefined) setSelectedAssigneeId(operators.assigneeId);
+  };
 
   return (
     <div className="toolbar">
@@ -83,9 +109,10 @@ export default function Toolbar({
             <span className="search-icon">🔍</span>
             <input
               className="search-input"
-              placeholder="Search nodes, tags, properties…"
+              placeholder="Search, or try priority:high due:today assignee:name…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
             />
             {searchQuery && (
               <button className="icon-btn search-clear" onClick={() => setSearchQuery('')} title="Clear search">

@@ -1,5 +1,6 @@
 import type { DragEvent } from 'react';
-import type { GraphNode, MapMember, TaskPriority } from '../../types/graph';
+import type { GraphNode, MapMember } from '../../types/graph';
+import { PRIORITY_COLOR } from '../../constants/taskVisuals';
 
 interface Column {
   key: string;
@@ -16,13 +17,6 @@ interface Props {
   onDropTask: (taskId: string, columnKey: string) => void;
   onSelectTask: (taskId: string) => void;
 }
-
-const PRIORITY_COLOR: Record<TaskPriority, string> = {
-  LOW: '#8899aa',
-  MEDIUM: '#4a90d9',
-  HIGH: '#e08a3c',
-  URGENT: '#d94f4f'
-};
 
 function formatDueDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -60,20 +54,17 @@ export default function TaskBoardLayout({ columns, scope, canEdit, memberById, o
                 .filter((m): m is NonNullable<typeof m> => !!m)
                 .map((m) => m.name ?? m.email)
                 .join(', ');
+              const accentColor = task.priority ? PRIORITY_COLOR[task.priority] : 'var(--border)';
               return (
                 <div
                   key={task.id}
-                  className="task-board-card"
+                  className="task-board-card priority-accent-card"
+                  style={{ borderLeftColor: accentColor }}
                   draggable={canEdit}
                   onDragStart={(e) => e.dataTransfer.setData('text/plain', task.id)}
                   onClick={() => onSelectTask(task.id)}
                 >
-                  <div className="task-board-card-title">
-                    {task.priority && (
-                      <span className="task-priority-dot" style={{ background: PRIORITY_COLOR[task.priority] }} />
-                    )}
-                    {task.name}
-                  </div>
+                  <div className="task-board-card-title">{task.name}</div>
                   {(task.dueDate || (scope === 'all' && assigneeNames)) && (
                     <div className="task-board-card-meta">
                       {scope === 'all' && assigneeNames && <span>{assigneeNames}</span>}

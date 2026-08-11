@@ -17,6 +17,10 @@ import { taskCommentsRoutes } from './routes/taskComments.routes.js';
 import { notificationsRoutes } from './routes/notifications.routes.js';
 import { taskAttachmentsRoutes } from './routes/taskAttachments.routes.js';
 import { teamsRoutes } from './routes/teams.routes.js';
+import { cronRoutes } from './routes/cron.routes.js';
+import { inboxRoutes } from './routes/inbox.routes.js';
+import { remindersRoutes } from './routes/reminders.routes.js';
+import { checklistRoutes } from './routes/checklist.routes.js';
 
 // Builds the API-only Fastify app - no .listen(), no static-file serving.
 // Shared by index.ts (local dev + Render, which add static serving and call
@@ -54,6 +58,10 @@ export async function createApp(options: { registerNotFoundHandler?: boolean } =
       await api.register(notificationsRoutes);
       await api.register(taskAttachmentsRoutes);
       await api.register(teamsRoutes);
+      await api.register(cronRoutes);
+      await api.register(inboxRoutes);
+      await api.register(remindersRoutes);
+      await api.register(checklistRoutes);
     },
     { prefix: '/api' }
   );

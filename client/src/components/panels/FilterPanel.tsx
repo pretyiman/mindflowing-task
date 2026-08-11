@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import type { GraphData, MapMember } from '../../types/graph';
+import { useState } from 'react';
+import type { GraphData } from '../../types/graph';
 import { useGraphStore } from '../../state/graphStore';
 import { useAuthStore } from '../../state/authStore';
-import { mapsApi } from '../../api/maps.api';
-import { filterGraph, isFilterActive } from '../graph/filterGraph';
+import { useMapMembers } from '../../hooks/useMapMembers';
+import { filterGraph, isFilterActive, type DueFilterValue } from '../graph/filterGraph';
 
 interface Props {
   mapId: string;
@@ -31,20 +31,14 @@ export default function FilterPanel({ mapId, graph, taskManagementEnabled, showG
     setSelectedTaskStatusId,
     selectedPriority,
     setSelectedPriority,
+    selectedDueFilter,
+    setSelectedDueFilter,
     clearFilters
   } = useGraphStore();
   const currentUserId = useAuthStore((s) => s.user?.id);
 
   const [showTagPicker, setShowTagPicker] = useState(false);
-  const [members, setMembers] = useState<MapMember[]>([]);
-
-  useEffect(() => {
-    if (!taskManagementEnabled) {
-      setMembers([]);
-      return;
-    }
-    mapsApi.members(mapId).then(setMembers);
-  }, [mapId, taskManagementEnabled]);
+  const members = useMapMembers(mapId, taskManagementEnabled);
 
   const filterState = {
     searchQuery,
@@ -53,7 +47,8 @@ export default function FilterPanel({ mapId, graph, taskManagementEnabled, showG
     connectedToNodeId,
     selectedAssigneeId,
     selectedTaskStatusId,
-    selectedPriority
+    selectedPriority,
+    selectedDueFilter
   };
   const active = isFilterActive(filterState);
   const matchCount = active ? filterGraph(graph, filterState).size : graph.nodes.length;
@@ -196,6 +191,17 @@ export default function FilterPanel({ mapId, graph, taskManagementEnabled, showG
             <option value="MEDIUM">Medium</option>
             <option value="HIGH">High</option>
             <option value="URGENT">Urgent</option>
+          </select>
+
+          <select
+            value={selectedDueFilter ?? ''}
+            onChange={(e) => setSelectedDueFilter((e.target.value as DueFilterValue) || null)}
+          >
+            <option value="">Due...</option>
+            <option value="overdue">Overdue</option>
+            <option value="today">Due today</option>
+            <option value="week">Due this week</option>
+            <option value="none">No due date</option>
           </select>
         </>
       )}

@@ -56,6 +56,7 @@ type MapUpdateInput = {
   description?: string;
   restrictedAccessEnabled?: boolean;
   taskManagementEnabled?: boolean;
+  targetDate?: string | null;
 };
 
 // Owner-only, full stop - name/description included. This route is only
@@ -70,7 +71,13 @@ export async function updateMap(id: string, data: MapUpdateInput, requestUserId:
   if (map.ownerId !== requestUserId) {
     throw new ForbiddenError('Only the map owner can change project settings');
   }
-  return prisma.map.update({ where: { id }, data });
+  return prisma.map.update({
+    where: { id },
+    data: {
+      ...data,
+      targetDate: data.targetDate === undefined ? undefined : data.targetDate === null ? null : new Date(data.targetDate)
+    }
+  });
 }
 
 // Owner-only - deleting the whole project is irreversible and affects every

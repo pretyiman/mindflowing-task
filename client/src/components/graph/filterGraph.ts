@@ -1,4 +1,11 @@
 import type { GraphData, GraphNode, TaskPriority } from '../../types/graph';
+import { localDateKey } from '../../utils/dateKeys';
+
+// "Due..." quick filter - overdue/today/week all exclude already-done tasks
+// (same as ProjectsDashboard's own Overdue/Due Today stats: this is meant to
+// surface work still to do, not completed history); 'none' is a plain
+// data-completeness filter and has no done-exclusion.
+export type DueFilterValue = 'overdue' | 'today' | 'week' | 'none';
 
 export interface FilterState {
   searchQuery: string;
@@ -8,6 +15,7 @@ export interface FilterState {
   selectedAssigneeId: string | null;
   selectedTaskStatusId: string | null;
   selectedPriority: TaskPriority | null;
+  selectedDueFilter: DueFilterValue | null;
 }
 
 export function isFilterActive(filter: FilterState): boolean {
@@ -18,7 +26,8 @@ export function isFilterActive(filter: FilterState): boolean {
     filter.connectedToNodeId !== null ||
     filter.selectedAssigneeId !== null ||
     filter.selectedTaskStatusId !== null ||
-    filter.selectedPriority !== null
+    filter.selectedPriority !== null ||
+    filter.selectedDueFilter !== null
   );
 }
 
@@ -123,6 +132,34 @@ export function filterGraph(data: GraphData, filter: FilterState): Set<string> {
   if (filter.selectedPriority) {
     const priorityMatch = new Set(data.nodes.filter((n) => n.priority === filter.selectedPriority).map((n) => n.id));
     matched = intersect(matched, priorityMatch);
+  }
+
+  if (filter.selectedDueFilter) {
+    const statusById = new Map(data.taskStatuses.map((s) => [s.id, s]));
+    const isDone = (n: GraphNode) => n.taskStatusId !== null && statusById.get(n.taskStatusId)?.kind === 'DONE';
+    const today = localDateKey(new Date());
+    const weekEnd = localDateKey(new Date(Date.now() + 6 * 24 * 60 * 60 * 1000));
+    const dueKeyOf = (n: GraphNode) => (n.dueDate ? localDateKey(new Date(n.dueDate)) : null);
+    const dueMatch = new Set(
+      data.nodes
+        .filter((n) => {
+          const dueKey = dueKeyOf(n);
+          switch (filter.selectedDueFilter) {
+            case 'none':
+              return dueKey === null;
+            case 'overdue':
+              return dueKey !== null && !isDone(n) && dueKey < today;
+            case 'today':
+              return dueKey !== null && !isDone(n) && dueKey === today;
+            case 'week':
+              return dueKey !== null && !isDone(n) && dueKey >= today && dueKey <= weekEnd;
+            default:
+              return false;
+          }
+        })
+        .map((n) => n.id)
+    );
+    matched = intersect(matched, dueMatch);
   }
 
   if (filter.connectedToNodeId) {

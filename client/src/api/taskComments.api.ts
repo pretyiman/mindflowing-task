@@ -18,5 +18,8 @@ export const taskCommentsApi = {
   list: (nodeId: string) => api.get<TaskComment[]>(`/nodes/${nodeId}/comments`),
   create: (nodeId: string, body: string, parentCommentId?: string | null) =>
     api.post<TaskComment>(`/nodes/${nodeId}/comments`, { body, parentCommentId }),
-  remove: (id: string) => api.delete<void>(`/comments/${id}`)
+  remove: (id: string) => api.delete<void>(`/comments/${id}`),
+  // Fire-and-forget "I opened this task" beacon - see activity.service.ts's
+  // recordNodeView. Callers should swallow errors, not surface them.
+  recordView: (nodeId: string) => api.post<void>(`/nodes/${nodeId}/view`)
 };

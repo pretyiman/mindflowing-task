@@ -132,7 +132,135 @@ html { overscroll-behavior-x: none; }
   min-width: 0;
 }
 
+.tm-sidebar {
+  width: 250px;
+  flex-shrink: 0;
+  height: 100vh;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4) var(--space-3);
+  overflow-y: auto;
+}
+.tm-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  padding: var(--space-2) var(--space-2) var(--space-4);
+}
+.tm-sidebar-logo { font-size: 1.2em; }
+.tm-sidebar-capture { padding: 0 var(--space-2) var(--space-4); }
+.tm-sidebar-capture input { width: 100%; }
+.tm-sidebar-capture-confirm {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75em;
+  color: var(--success-text);
+}
+.tm-sidebar-capture-error { display: block; margin-top: 4px; font-size: 0.75em; }
+.tm-sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.9em;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tm-sidebar-nav-item:hover { background: var(--surface-hover); }
+.tm-sidebar-nav-item-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+.tm-sidebar-nav-item-active:hover { background: var(--accent-soft); }
+.tm-sidebar-section { margin-top: var(--space-5); }
+.tm-sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  margin-bottom: var(--space-2);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.tm-sidebar-section-header button {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 0 2px;
+}
+.tm-sidebar-section-header button:hover { color: var(--text); }
+.tm-sidebar-project-list { display: flex; flex-direction: column; gap: 1px; }
+.tm-sidebar-empty { padding: 0 10px; font-size: 0.8em; color: var(--text-faint); }
+.tm-sidebar-new-project-form {
+  padding: 0 10px;
+  margin: 2px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tm-sidebar-new-project-form input { width: 100%; }
+.tm-sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) 10px 0;
+  font-size: 0.7em;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+}
+.tm-sidebar-settings-btn {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  /* Absolute, not relative to the footer's own small 0.7em text - this is a
+     click target, not a label, and was easy to miss at the old 1.1em (which
+     resolved to under 8px). */
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+.tm-sidebar-settings-btn:hover { background: var(--surface-hover); color: var(--text); }
+
 .task-list-view {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6);
+}
+
+/* Full-width Task Manager page wrapper (Today, Projects) - unlike .maps-page
+   (centered, max ~760px column, right for MapsListPage's simple list), these
+   are dashboards and need the full width available: Today's Weekly Progress
+   card needs room to be wider than Overview, and Projects' list rows need
+   room for a real stat breakdown instead of a cramped multi-column card grid. */
+.tm-page {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
@@ -183,6 +311,89 @@ html { overscroll-behavior-x: none; }
 }
 .task-row { cursor: pointer; }
 .task-row:hover { background: var(--surface-hover); }
+
+.task-card-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.task-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  /* Set after the shorthand above, and again in .priority-accent-card below -
+     `border` is a shorthand for all 4 sides, so whichever of these two rules
+     is LAST in source order would otherwise silently win and reset
+     border-left back to 1px (bit us once already in .task-board-card).
+     Declaring the width here directly makes this rule self-sufficient
+     regardless of stylesheet ordering. */
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease), transform 120ms var(--ease);
+}
+.task-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.task-card-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.task-card-name {
+  font-weight: 600;
+  font-size: 0.94em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-card-meta {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 0.78em;
+  color: var(--text-muted);
+}
+
+/* Shared "tududi-style" primitives: a colored pill for task status (themed
+   per-status from its own custom color, not a fixed palette - statuses are
+   user-renamable/recolorable via Manage Statuses) and a colored left-border
+   accent for priority. Used by task rows, cards, and the task detail view so
+   all three read as one consistent visual language. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.78em;
+  font-weight: 700;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.status-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+select.status-pill {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 24px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+select.status-pill:disabled { cursor: not-allowed; background-image: none; padding-right: 12px; }
+
+.priority-accent-card {
+  border-left: 4px solid var(--border);
+}
+
+.tududi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
 .task-manager-home-map-title { cursor: pointer; }
 .task-manager-home-map-title:hover { color: var(--text); }
 .link-btn {
@@ -197,32 +408,169 @@ html { overscroll-behavior-x: none; }
 .link-btn:disabled { cursor: default; text-decoration: none; color: inherit; }
 
 .dashboard-cards {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: var(--space-3);
-  overflow-x: auto;
-  padding-bottom: var(--space-2);
   margin-bottom: var(--space-4);
 }
 .dashboard-card {
-  flex: 0 0 220px;
-  background: var(--surface-raised);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-4);
   cursor: pointer;
   text-align: left;
   font: inherit;
   color: inherit;
+  transition: border-color 120ms var(--ease), transform 120ms var(--ease), box-shadow 120ms var(--ease);
 }
-.dashboard-card:hover { border-color: var(--accent); background: var(--surface-hover); }
+.dashboard-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
 .dashboard-card-title {
-  font-size: 0.88rem;
-  font-weight: 600;
-  margin: 0 0 var(--space-2);
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0 0 var(--space-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.dashboard-card-stats { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3); }
+.dashboard-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.82em;
+  color: var(--text-muted);
+}
+.dashboard-stat-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.dashboard-stat-row-overdue strong { color: #d94f4f; }
+
+.today-subtitle { margin: -8px 0 var(--space-4); }
+.today-dashboard-row {
+  display: grid;
+  /* Overview stays compact (just label+number rows); Weekly Progress gets
+     the rest of the width, same proportion as the reference screenshot. */
+  grid-template-columns: minmax(230px, 320px) 1fr;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+@media (max-width: 700px) {
+  .today-dashboard-row { grid-template-columns: 1fr; }
+}
+.today-overview-card, .today-trend-card { padding: var(--space-4); }
+.today-overdue-title { color: #d94f4f; }
+
+.dashboard-sparkline { width: 100%; height: 32px; display: block; }
+
+.project-dashboard-list { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-4); }
+.project-dashboard-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: var(--space-4);
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-4);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 120ms var(--ease), transform 120ms var(--ease), box-shadow 120ms var(--ease);
+}
+.project-dashboard-row:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.project-dashboard-row-simple { grid-template-columns: 1fr auto; }
+/* The in-project dashboard header (ProjectDashboardHeader.tsx) reuses this
+   row layout but isn't a clickable button - there's nowhere left to navigate
+   to, you're already inside this project. Neutralizes the button's own
+   cursor/hover affordance. */
+.project-dashboard-row-static { cursor: default; margin-bottom: var(--space-4); }
+.project-dashboard-row-static:hover { border-color: var(--border); transform: none; box-shadow: none; }
+.project-dashboard-row-right { display: flex; flex-direction: column; gap: var(--space-2); }
+@media (max-width: 700px) {
+  .project-dashboard-row, .project-dashboard-row-simple { grid-template-columns: 1fr; }
+}
+
+.calendar-header { align-items: center; }
+.calendar-nav { display: flex; gap: var(--space-2); align-items: center; }
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.calendar-weekday {
+  background: var(--surface-raised);
+  padding: 8px;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.calendar-cell {
+  background: var(--surface);
+  min-height: 108px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+.calendar-cell-muted { background: var(--surface-raised); }
+.calendar-cell-muted .calendar-cell-date { color: var(--text-faint); }
+.calendar-cell-today { box-shadow: inset 0 0 0 2px var(--accent); }
+.calendar-cell-date { font-size: 0.78em; font-weight: 600; color: var(--text-muted); }
+.calendar-cell-date-today {
+  color: white;
+  background: var(--accent);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+.calendar-task-pill {
+  font-size: 0.68em;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-left: 3px solid;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-task-pill:hover { filter: brightness(0.94); }
+.calendar-more-text { font-size: 0.64em; color: var(--text-faint); padding-left: 4px; }
+/* Distinct from .calendar-task-pill - a reminder has no status/priority to
+   tint by, so it gets its own fixed accent instead of reusing statusPillStyle. */
+.calendar-reminder-pill {
+  font-size: 0.68em;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-reminder-pill:hover { filter: brightness(0.94); }
 
 .task-board {
   display: flex;
@@ -259,11 +607,14 @@ html { overscroll-behavior-x: none; }
 .task-board-card {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left-width: 4px; /* after the shorthand - see .task-card's own comment on why */
   border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
+  transition: border-color 120ms var(--ease), transform 120ms var(--ease);
 }
-.task-board-card:hover { border-color: var(--border-strong); }
+.task-board-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
 .task-board-card-title { font-size: 0.9rem; }
 .task-board-card-meta {
   display: flex;
@@ -465,6 +816,27 @@ html { overscroll-behavior-x: none; }
   height: 3px;
   border-radius: 2px;
 }
+
+.flow-node-linked-tasks-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1.5px solid var(--canvas);
+  white-space: nowrap;
+}
+.flow-node-linked-tasks-badge-done { background: var(--success-text); }
 
 .flow-node-quick-add {
   position: absolute;
@@ -830,6 +1202,35 @@ html { overscroll-behavior-x: none; }
   letter-spacing: -0.01em;
 }
 
+/* A real 50/50 tab bar, unlike .tag-chip-list's auto-width wrapping chips -
+   there are always exactly two tabs here, and they should each fill half the
+   sidebar rather than shrink to their label's width. */
+.node-detail-tabs {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.node-detail-tab {
+  flex: 1;
+  text-align: center;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms var(--ease), border-color 120ms var(--ease), color 120ms var(--ease);
+}
+.node-detail-tab:hover { background: var(--surface-hover); }
+.node-detail-tab-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.node-detail-tab-active:hover { background: var(--accent); }
+
 .name-input {
   background: transparent;
   border: none;
@@ -874,6 +1275,32 @@ html { overscroll-behavior-x: none; }
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
+}
+/* Grid items default to min-width: auto, so a column can be stretched wider
+   than its 1fr share by whichever field's content is widest (e.g. the
+   Priority select) - min-width: 0 here is what actually makes both columns
+   equal, not just the 1fr declaration above. */
+.task-field-grid > div { min-width: 0; }
+
+/* Notes/Instructions on the left, the list-style sections (Sub-tasks,
+   Checklist, Attachments) stacked on the right - the textarea used to be
+   full page width with nothing beside it, wasting most of the page on wide
+   screens. .task-detail-column-right isn't its own grid item with a fixed
+   width - it's a plain flow column that stacks its .property children
+   (each already carries its own margin-bottom), matching how those same
+   sections looked before this split. Single column below a reasonable
+   width, same min-width: 0 guard as .task-field-grid so the wider column
+   doesn't stretch past its 1fr share. */
+.task-detail-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  margin-bottom: var(--space-4);
+}
+.task-detail-columns > div { min-width: 0; }
+.task-detail-column-right .property:last-child { margin-bottom: 0; }
+@media (max-width: 860px) {
+  .task-detail-columns { grid-template-columns: 1fr; }
 }
 .task-field-label {
   display: block;
@@ -1232,6 +1659,50 @@ html { overscroll-behavior-x: none; }
 .task-discussion-comment-body { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .task-discussion-activity { padding: 4px 0; }
 
+.checklist-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; }
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.checklist-item-dragging { opacity: 0.4; }
+.checklist-drag-handle { cursor: grab; color: var(--text-faint); line-height: 1; }
+/* .property label (a global section-header style: uppercase, block, muted,
+   small) outranks a bare .checklist-item-label on specificity - this is
+   user-entered item text, not chrome, so every one of those has to be
+   explicitly reset back to normal here, not just text-transform. */
+.property .checklist-item-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  font-weight: 400;
+  font-size: 0.92rem;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+  margin-bottom: 0;
+}
+/* .property input (a global form-field style: width:100%, background,
+   border, padding - meant for text/select/textarea) also matches this
+   checkbox since it's a bare <input> inside .property - the first checkbox
+   this app has ever nested in a .property block, so the collision never
+   surfaced before. Reset back to a normal native checkbox box. */
+.checklist-item-label input[type='checkbox'] {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: initial;
+  border: initial;
+}
+.checklist-item-label span { overflow-wrap: break-word; }
+.checklist-item-text-done { text-decoration: line-through; color: var(--text-faint); }
+
 .discussion-tabs { margin-bottom: var(--space-3); }
 .discussion-empty { color: var(--text-muted); font-size: 0.9em; }
 
@@ -1328,6 +1799,12 @@ html { overscroll-behavior-x: none; }
   font-variant-numeric: tabular-nums;
 }
 
+.pace-text { margin: 4px 0 0; font-size: 0.82em; font-weight: 600; }
+.pace-ahead { color: #3a9d6f; }
+.pace-on-track { color: #4a90d9; }
+.pace-behind { color: #e08a3c; }
+.pace-overdue { color: #d94f4f; }
+
 .manage-table {
   width: 100%;
   border-collapse: collapse;
@@ -1379,13 +1856,22 @@ html { overscroll-behavior-x: none; }
   border: 1px solid var(--border-strong);
 }
 
-select, input[type="text"], input:not([type]) {
+select, input[type="text"], input:not([type]), input[type="date"], textarea {
   background: var(--surface-raised);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 7px 9px;
   font: inherit;
+}
+
+/* input[type=date] has a narrow, non-stretching intrinsic width by default -
+   unlike select/text inputs, it won't fill a flex/grid cell on its own, so a
+   Due Date field next to a Status/Priority dropdown looks conspicuously
+   smaller unless forced to match. */
+.task-field-grid select,
+.task-field-grid input {
+  width: 100%;
 }
 
 :focus-visible {

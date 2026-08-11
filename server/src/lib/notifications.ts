@@ -1,6 +1,6 @@
 import { prisma } from '../db.js';
 
-export type NotificationType = 'ASSIGNED' | 'COMMENT' | 'MENTION' | 'STATUS_CHANGED';
+export type NotificationType = 'ASSIGNED' | 'COMMENT' | 'MENTION' | 'STATUS_CHANGED' | 'DUE_SOON' | 'REMINDER';
 
 /**
  * Best-effort, fire-and-forget - same contract as logActivity: never throws

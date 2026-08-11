@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { GraphNode, PropertyValue, TaskPriority } from '../types/graph';
+import type { GraphNode, PropertyValue, RecurrenceRule, TaskPriority } from '../types/graph';
 
 type NodeInput = {
   categoryId?: string | null;
@@ -15,6 +15,7 @@ type NodeInput = {
   assigneeIds?: string[];
   priority?: TaskPriority | null;
   dueDate?: string | null;
+  recurrenceRule?: RecurrenceRule | null;
 };
 
 type NodeUpdateInput = Partial<NodeInput>;
