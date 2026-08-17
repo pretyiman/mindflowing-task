@@ -1904,6 +1904,26 @@ select, input[type="text"], input:not([type]), input[type="date"], textarea {
 
 .filter-trigger-wrap { position: relative; }
 
+.export-trigger-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 34px;
+  padding: 0 var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: background 120ms var(--ease), border-color 120ms var(--ease);
+}
+.export-trigger-btn:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.export-trigger-btn:disabled { opacity: 0.6; cursor: default; }
+.export-menu-popover { min-width: 170px; }
+
 .icon-tool-btn {
   display: flex;
   align-items: center;

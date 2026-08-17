@@ -315,6 +315,7 @@ export default function App() {
             ) : (
               <GraphCanvas
                 mapId={currentMapId}
+                mapName={currentMap?.name ?? ''}
                 data={graphQuery.data}
                 selectedNodeId={selectedNodeId}
                 onNodeClick={selectNode}
